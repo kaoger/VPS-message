@@ -1,0 +1,64 @@
+{
+  "version": "fixed-8-v1",
+  "note": "Hardcoded in src/flow.js — this file is a mirror for humans / future Supabase published_config. Runtime does NOT load this file.",
+  "flow": [
+    {
+      "step": 1,
+      "key": "service",
+      "text": "請問您需要哪一類服務？",
+      "type": "quick_reply",
+      "options": ["新成屋裝潢", "舊屋翻新", "局部裝修", "商業空間", "其他服務"]
+    },
+    {
+      "step": 2,
+      "key": "area",
+      "text": "您好，請問您需要的服務地區是？",
+      "type": "quick_reply",
+      "options": ["高雄市", "台南", "嘉義", "台中", "彰化", "雲林", "其他地區"],
+      "other": "若選其他地區 → 下一則請使用者輸入地區名稱"
+    },
+    {
+      "step": 3,
+      "key": "size",
+      "text": "請問您預計裝修的坪數大約是多少？",
+      "type": "quick_reply",
+      "options": ["20 坪以下", "21–30 坪", "31–40 坪", "41–60 坪", "61 坪以上", "尚未確定"]
+    },
+    {
+      "step": 4,
+      "key": "timeline",
+      "text": "請問您預計何時開始進行裝修？",
+      "type": "quick_reply",
+      "options": ["一個月內", "1–3 個月", "3–6 個月", "半年以上", "尚未確定"]
+    },
+    {
+      "step": 5,
+      "key": "budget",
+      "text": "請問您的預算範圍大約是？",
+      "type": "quick_reply",
+      "options": ["50 萬以下", "50–100 萬", "100–200 萬", "200–300 萬", "300 萬以上", "尚未確定"]
+    },
+    {
+      "step": 6,
+      "key": "name",
+      "text": "謝謝您，請留下您的姓名，方便我們稱呼您。",
+      "type": "text"
+    },
+    {
+      "step": 7,
+      "key": "phone",
+      "text": "請留下您的聯絡電話，方便專人與您聯繫。",
+      "type": "text",
+      "validation": "09 + 10 digits",
+      "error": "電話格式似乎不正確，請輸入 09 開頭的 10 碼手機號碼，例如：0912345678"
+    },
+    {
+      "step": 8,
+      "key": "contact_time",
+      "text": "請問方便聯絡時間？",
+      "type": "quick_reply",
+      "options": ["上午 8–12 點", "下午 1–5 點", "晚上 6–9 點"]
+    }
+  ],
+  "after_step_8": "summary text + 感謝您完成填寫。"
+}
