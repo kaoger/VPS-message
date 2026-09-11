@@ -1,147 +1,118 @@
-/**
- * Fixed 8-question Messenger flow.
- * Hardcoded — no Supabase question bank, no dynamic load.
- */
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-export const FLOW = [
-  {
-    key: "service",
-    text: "請問您需要哪一類服務？",
-    type: "quick_reply",
-    options: [
-      ["新成屋裝潢", "SERVICE_NEW_HOME"],
-      ["舊屋翻新", "SERVICE_OLD_HOME"],
-      ["局部裝修", "SERVICE_PARTIAL"],
-      ["商業空間", "SERVICE_COMMERCIAL"],
-      ["其他服務", "SERVICE_OTHER"],
-    ],
-  },
-  {
-    key: "area",
-    text: "您好，請問您需要的服務地區是？",
-    type: "quick_reply",
-    options: [
-      ["高雄市", "AREA_KAOHSIUNG"],
-      ["台南", "AREA_TAINAN"],
-      ["嘉義", "AREA_CHIAYI"],
-      ["台中", "AREA_TAICHUNG"],
-      ["彰化", "AREA_CHANGHUA"],
-      ["雲林", "AREA_YUNLIN"],
-      ["其他地區", "AREA_OTHER"],
-    ],
-    // When payload is AREA_OTHER, wait for free-text region name next.
-    otherPayload: "AREA_OTHER",
-    otherPrompt: "請直接輸入您的服務地區名稱：",
-  },
-  {
-    key: "size",
-    text: "請問您預計裝修的坪數大約是多少？",
-    type: "quick_reply",
-    options: [
-      ["20 坪以下", "SIZE_UNDER_20"],
-      ["21–30 坪", "SIZE_21_30"],
-      ["31–40 坪", "SIZE_31_40"],
-      ["41–60 坪", "SIZE_41_60"],
-      ["61 坪以上", "SIZE_OVER_61"],
-      ["尚未確定", "SIZE_UNKNOWN"],
-    ],
-  },
-  {
-    key: "timeline",
-    text: "請問您預計何時開始進行裝修？",
-    type: "quick_reply",
-    options: [
-      ["一個月內", "TIME_1M"],
-      ["1–3 個月", "TIME_1_3M"],
-      ["3–6 個月", "TIME_3_6M"],
-      ["半年以上", "TIME_OVER_6M"],
-      ["尚未確定", "TIME_UNKNOWN"],
-    ],
-  },
-  {
-    key: "budget",
-    text: "請問您的預算範圍大約是？",
-    type: "quick_reply",
-    options: [
-      ["50 萬以下", "BUDGET_UNDER_50"],
-      ["50–100 萬", "BUDGET_50_100"],
-      ["100–200 萬", "BUDGET_100_200"],
-      ["200–300 萬", "BUDGET_200_300"],
-      ["300 萬以上", "BUDGET_OVER_300"],
-      ["尚未確定", "BUDGET_UNKNOWN"],
-    ],
-  },
-  {
-    key: "name",
-    text: "謝謝您，請留下您的姓名，方便我們稱呼您。",
-    type: "text",
-  },
-  {
-    key: "phone",
-    text: "請留下您的聯絡電話，方便專人與您聯繫。",
-    type: "text",
-    validate: (raw) => /^09\d{8}$/.test(String(raw || "").trim()),
-    errorText:
-      "電話格式似乎不正確，請輸入 09 開頭的 10 碼手機號碼，例如：0912345678",
-  },
-  {
-    key: "contact_time",
-    text: "請問方便聯絡時間？",
-    type: "quick_reply",
-    options: [
-      ["上午 8–12 點", "CONTACT_AM"],
-      ["下午 1–5 點", "CONTACT_PM"],
-      ["晚上 6–9 點", "CONTACT_EVE"],
-    ],
-  },
-];
-
-/** Human labels for summary */
-export const SUMMARY_LABELS = {
-  service: "服務類型",
-  area: "服務地區",
-  size: "預計坪數",
-  timeline: "開始時間",
-  budget: "預算範圍",
-  name: "姓名",
-  phone: "聯絡電話",
-  contact_time: "聯絡時段",
+const DEFAULT_CONFIG_PATH = fileURLToPath(new URL("../config/questions.json", import.meta.url));
+const CONFIG_PATH = process.env.QUESTIONS_PATH ? path.resolve(process.env.QUESTIONS_PATH) : DEFAULT_CONFIG_PATH;
+const validators = {
+  tw_mobile_09: (raw) => /^09\d{8}$/.test(String(raw || "").trim()),
 };
 
-/** Summary shown before confirm (no final thank-you yet). */
+function configError(message) {
+  return new Error(`Invalid questions config at ${CONFIG_PATH}: ${message}`);
+}
+
+function loadConfig() {
+  let raw;
+  try {
+    raw = readFileSync(CONFIG_PATH, "utf8");
+  } catch (error) {
+    throw configError(`unable to read file (${error.message})`);
+  }
+
+  let config;
+  try {
+    config = JSON.parse(raw);
+  } catch (error) {
+    throw configError(`invalid JSON (${error.message})`);
+  }
+
+  if (!config || typeof config !== "object") throw configError("root must be an object");
+  if (!Array.isArray(config.flow) || config.flow.length < 1) {
+    throw configError("flow must contain at least 1 question");
+  }
+  if (!config.confirm || typeof config.confirm !== "object") throw configError("confirm must be an object");
+
+  const keys = new Set();
+  const flow = config.flow.map((step, index) => {
+    const label = `flow[${index}]`;
+    if (!step || typeof step !== "object") throw configError(`${label} must be an object`);
+    if (typeof step.key !== "string" || !step.key) throw configError(`${label}.key is required`);
+    if (keys.has(step.key)) throw configError(`duplicate flow key: ${step.key}`);
+    keys.add(step.key);
+    if (!["quick_reply", "button_template", "text"].includes(step.type)) throw configError(`${label}.type is invalid`);
+    if (typeof step.text !== "string" || !step.text) throw configError(`${label}.text is required`);
+
+    const normalized = { ...step };
+    if (step.type === "quick_reply" || step.type === "button_template") {
+      if (!Array.isArray(step.options) || step.options.length === 0) {
+        throw configError(`${label}.options must be a non-empty array`);
+      }
+      normalized.options = step.options.map((option, optionIndex) => {
+        if (!option || typeof option.title !== "string" || typeof option.payload !== "string") {
+          throw configError(`${label}.options[${optionIndex}] requires title and payload`);
+        }
+        return [option.title, option.payload];
+      });
+      if (step.other != null) {
+        if (typeof step.other.payload !== "string" || typeof step.other.prompt !== "string") {
+          throw configError(`${label}.other requires payload and prompt`);
+        }
+        normalized.otherPayload = step.other.payload;
+        normalized.otherPrompt = step.other.prompt;
+      }
+    }
+    if (step.validate != null) {
+      if (!validators[step.validate]) throw configError(`${label}.validate is unknown: ${step.validate}`);
+      normalized.validate = validators[step.validate];
+    }
+    if (step.error_text != null) normalized.errorText = step.error_text;
+    return normalized;
+  });
+
+  const confirm = config.confirm;
+  if (!Array.isArray(confirm.options) || confirm.options.length === 0) {
+    throw configError("confirm.options must be a non-empty array");
+  }
+  const confirmOptions = confirm.options.map((option, index) => {
+    if (!option || typeof option.title !== "string" || typeof option.payload !== "string") {
+      throw configError(`confirm.options[${index}] requires title and payload`);
+    }
+    return [option.title, option.payload];
+  });
+  for (const field of ["success_text", "summary_footer"]) {
+    if (typeof confirm[field] !== "string" || !confirm[field]) throw configError(`confirm.${field} is required`);
+  }
+  if (!confirm.summary_labels || typeof confirm.summary_labels !== "object") {
+    throw configError("confirm.summary_labels must be an object");
+  }
+  for (const key of keys) {
+    if (typeof confirm.summary_labels[key] !== "string") {
+      throw configError(`confirm.summary_labels.${key} is required`);
+    }
+  }
+
+  return { config, flow, confirmOptions };
+}
+
+const loaded = loadConfig();
+
+export const FLOW = loaded.flow;
+export const getFlow = () => FLOW;
+export const SUMMARY_LABELS = Object.freeze({ ...loaded.config.confirm.summary_labels });
+export const CONFIRM_OPTIONS = loaded.confirmOptions;
+export const SUBMIT_SUCCESS_TEXT = loaded.config.confirm.success_text;
+export const IS_TEST_BUILD = true;
+
 export function buildSummary(answers) {
-  const lines = [
-    "以下是您填寫的資料：",
-    "",
-    `服務類型：${answers.service ?? ""}`,
-    `服務地區：${answers.area ?? ""}`,
-    `預計坪數：${answers.size ?? ""}`,
-    `開始時間：${answers.timeline ?? ""}`,
-    `預算範圍：${answers.budget ?? ""}`,
-    `姓名：${answers.name ?? ""}`,
-    `聯絡電話：${answers.phone ?? ""}`,
-    `聯絡時段：${answers.contact_time ?? ""}`,
-    "",
-    "請確認資料是否正確：",
-  ];
+  const lines = ["以下是您填寫的資料：", ""];
+  for (const step of FLOW) lines.push(`${SUMMARY_LABELS[step.key]}：${answers[step.key] ?? ""}`);
+  lines.push("", loaded.config.confirm.summary_footer);
   return lines.join("\n");
 }
 
-/** Quick replies on the confirm screen */
-export const CONFIRM_OPTIONS = [
-  ["確認送出", "CONFIRM_SUBMIT"],
-  ["重新填寫", "CONFIRM_RESTART"],
-];
-
-export const SUBMIT_SUCCESS_TEXT =
-  "感謝您完成需求填寫，我們已收到資料，將由專人與您聯繫。";
-
-/** Test-mode note (only for local /test if needed) */
-export const IS_TEST_BUILD = true;
-
-/** Resolve quick-reply payload → display title */
 export function titleForPayload(stepDef, payload) {
   if (!stepDef?.options) return null;
-  const hit = stepDef.options.find(([, p]) => p === payload);
+  const hit = stepDef.options.find(([, optionPayload]) => optionPayload === payload);
   return hit ? hit[0] : null;
 }

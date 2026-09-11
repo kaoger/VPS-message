@@ -1,0 +1,49 @@
+{
+  "version": "q1q2-button-template-test",
+  "note": "Test: Q1+Q2 Button Template, then confirm. Full 8 later. No per-step Supabase writes.",
+  "flow": [
+    {
+      "key": "service",
+      "type": "button_template",
+      "text": "【測試】請問您需要哪一類服務？",
+      "options": [
+        { "title": "新成屋裝潢", "payload": "SERVICE_NEW_HOME" },
+        { "title": "舊屋翻新", "payload": "SERVICE_OLD_HOME" },
+        { "title": "局部裝修", "payload": "SERVICE_PARTIAL" },
+        { "title": "商業空間", "payload": "SERVICE_COMMERCIAL" },
+        { "title": "其他服務", "payload": "SERVICE_OTHER" }
+      ],
+      "other": null
+    },
+    {
+      "key": "area",
+      "type": "button_template",
+      "text": "您好，請問您需要的服務地區是？",
+      "options": [
+        { "title": "高雄市", "payload": "AREA_KAOHSIUNG" },
+        { "title": "台南", "payload": "AREA_TAINAN" },
+        { "title": "嘉義", "payload": "AREA_CHIAYI" },
+        { "title": "台中", "payload": "AREA_TAICHUNG" },
+        { "title": "彰化", "payload": "AREA_CHANGHUA" },
+        { "title": "雲林", "payload": "AREA_YUNLIN" },
+        { "title": "其他地區", "payload": "AREA_OTHER" }
+      ],
+      "other": {
+        "payload": "AREA_OTHER",
+        "prompt": "請直接輸入您的服務地區名稱："
+      }
+    }
+  ],
+  "confirm": {
+    "options": [
+      { "title": "確認送出", "payload": "CONFIRM_SUBMIT" },
+      { "title": "重新填寫", "payload": "CONFIRM_RESTART" }
+    ],
+    "success_text": "感謝您完成需求填寫，我們已收到資料，將由專人與您聯繫。",
+    "summary_labels": {
+      "service": "服務類型",
+      "area": "服務地區"
+    },
+    "summary_footer": "【測試】請確認後送出，以測試通知："
+  }
+}

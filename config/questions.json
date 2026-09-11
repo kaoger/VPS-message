@@ -1,0 +1,49 @@
+{
+  "version": "messenger-8-v1",
+  "flow": [
+    { "key": "service", "type": "quick_reply", "text": "請問您需要哪一類服務？", "options": [
+      { "title": "新成屋裝潢", "payload": "SERVICE_NEW_HOME" }, { "title": "舊屋翻新", "payload": "SERVICE_OLD_HOME" },
+      { "title": "局部裝修", "payload": "SERVICE_PARTIAL" }, { "title": "商業空間", "payload": "SERVICE_COMMERCIAL" },
+      { "title": "其他服務", "payload": "SERVICE_OTHER" }
+    ], "other": null },
+    { "key": "area", "type": "quick_reply", "text": "您好，請問您需要的服務地區是？", "options": [
+      { "title": "高雄市", "payload": "AREA_KAOHSIUNG" }, { "title": "台南", "payload": "AREA_TAINAN" },
+      { "title": "嘉義", "payload": "AREA_CHIAYI" }, { "title": "台中", "payload": "AREA_TAICHUNG" },
+      { "title": "彰化", "payload": "AREA_CHANGHUA" }, { "title": "雲林", "payload": "AREA_YUNLIN" },
+      { "title": "其他地區", "payload": "AREA_OTHER" }
+    ], "other": { "payload": "AREA_OTHER", "prompt": "請直接輸入您的服務地區名稱：" } },
+    { "key": "size", "type": "quick_reply", "text": "請問您預計裝修的坪數大約是多少？", "options": [
+      { "title": "20 坪以下", "payload": "SIZE_UNDER_20" }, { "title": "21–30 坪", "payload": "SIZE_21_30" },
+      { "title": "31–40 坪", "payload": "SIZE_31_40" }, { "title": "41–60 坪", "payload": "SIZE_41_60" },
+      { "title": "61 坪以上", "payload": "SIZE_OVER_61" }, { "title": "尚未確定", "payload": "SIZE_UNKNOWN" }
+    ], "other": null },
+    { "key": "timeline", "type": "quick_reply", "text": "請問您預計何時開始進行裝修？", "options": [
+      { "title": "一個月內", "payload": "TIME_1M" }, { "title": "1–3 個月", "payload": "TIME_1_3M" },
+      { "title": "3–6 個月", "payload": "TIME_3_6M" }, { "title": "半年以上", "payload": "TIME_OVER_6M" },
+      { "title": "尚未確定", "payload": "TIME_UNKNOWN" }
+    ], "other": null },
+    { "key": "budget", "type": "quick_reply", "text": "請問您的預算範圍大約是？", "options": [
+      { "title": "50 萬以下", "payload": "BUDGET_UNDER_50" }, { "title": "50–100 萬", "payload": "BUDGET_50_100" },
+      { "title": "100–200 萬", "payload": "BUDGET_100_200" }, { "title": "200–300 萬", "payload": "BUDGET_200_300" },
+      { "title": "300 萬以上", "payload": "BUDGET_OVER_300" }, { "title": "尚未確定", "payload": "BUDGET_UNKNOWN" }
+    ], "other": null },
+    { "key": "name", "type": "text", "text": "謝謝您，請留下您的姓名，方便我們稱呼您。" },
+    { "key": "phone", "type": "text", "text": "請留下您的聯絡電話，方便專人與您聯繫。", "validate": "tw_mobile_09", "error_text": "電話格式似乎不正確，請輸入 09 開頭的 10 碼手機號碼，例如：0912345678" },
+    { "key": "contact_time", "type": "quick_reply", "text": "請問方便聯絡時間？", "options": [
+      { "title": "上午 8–12 點", "payload": "CONTACT_AM" }, { "title": "下午 1–5 點", "payload": "CONTACT_PM" },
+      { "title": "晚上 6–9 點", "payload": "CONTACT_EVE" }
+    ], "other": null }
+  ],
+  "confirm": {
+    "options": [
+      { "title": "確認送出", "payload": "CONFIRM_SUBMIT" },
+      { "title": "重新填寫", "payload": "CONFIRM_RESTART" }
+    ],
+    "success_text": "感謝您完成需求填寫，我們已收到資料，將由專人與您聯繫。",
+    "summary_labels": {
+      "service": "服務類型", "area": "服務地區", "size": "預計坪數", "timeline": "開始時間",
+      "budget": "預算範圍", "name": "姓名", "phone": "聯絡電話", "contact_time": "聯絡時段"
+    },
+    "summary_footer": "請確認資料是否正確："
+  }
+}

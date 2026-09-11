@@ -1,8 +1,10 @@
 # sanhe-messenger-bot
 
-固定 8 題 Facebook Messenger 問卷（寫死在 `src/flow.js`）。
+固定 8 題 Facebook Messenger 問卷。題目與確認設定在 `config/questions.json`，啟動時載入記憶體；可用 `QUESTIONS_PATH` 指定其他設定檔。
 
-**不做：** Supabase 題庫、動態載入、改 LINE／8646／Hermes。
+**對話中：** 不寫資料庫。  
+**確認送出：** 寫一筆 `customer_leads`（Supabase）。  
+**不做：** 題庫動態載入、改 LINE／8646／Hermes。
 
 ## 流程
 
@@ -13,21 +15,23 @@
 5. 預算（快選）
 6. 姓名（文字）
 7. 電話（文字，09 開頭 10 碼）
-8. 聯絡時段（快選）→ 回摘要
+8. 聯絡時段（快選）→ 摘要 → **確認送出／重新填寫**
 
-Session：記憶體、30 分鐘 TTL。完成後再傳訊會重頭開始。
+Session：記憶體、30 分鐘 TTL。
 
 ## 啟動
 
 ```bash
 cd /opt/data/projects/sanhe-messenger-bot
-# .env: PORT=3000 META_VERIFY_TOKEN=... META_PAGE_ACCESS_TOKEN=...
+# .env 需要：
+# PORT META_VERIFY_TOKEN META_PAGE_ACCESS_TOKEN
+# SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY
 npm start
 ```
 
-- Health: `GET /health`
+- Health: `GET /health`（含 `supabaseConfigured`）
 - Webhook verify: `GET /webhook`
 - Events: `POST /webhook`（先 200 再處理）
-- 本機測流程：`POST /test/reset`、`POST /test/message`
+- 本機測：`POST /test/reset`、`POST /test/message`
 
 Port **3000 only**。
