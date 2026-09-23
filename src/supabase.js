@@ -6,11 +6,11 @@ function getClient() {
   if (client) return client;
 
   const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url || !key) {
     throw new Error(
-      "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment"
+      "Missing SUPABASE_URL or server-side Supabase key in environment"
     );
   }
 
@@ -55,6 +55,6 @@ export async function createCustomerLead({ senderId, answers }) {
 
 export function isSupabaseConfigured() {
   return Boolean(
-    process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+    process.env.SUPABASE_URL && (process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)
   );
 }

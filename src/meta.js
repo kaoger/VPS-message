@@ -7,10 +7,10 @@ async function sendMessage(recipientId, message, messagingType = "RESPONSE") {
   }
 
   const response = await fetch(
-    `${GRAPH_URL}?access_token=${encodeURIComponent(token)}`,
+    GRAPH_URL,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({
         messaging_type: messagingType,
         recipient: { id: recipientId },
@@ -20,8 +20,7 @@ async function sendMessage(recipientId, message, messagingType = "RESPONSE") {
   );
 
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Meta send failed ${response.status}: ${body}`);
+    throw new Error(`Meta send failed ${response.status}`);
   }
 }
 

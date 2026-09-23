@@ -1,12 +1,14 @@
 import crypto from "node:crypto";
 
 function secret() {
-  return (
-    process.env.FORM_TOKEN_SECRET ||
-    process.env.META_VERIFY_TOKEN ||
-    "dev-form-secret-change-me"
-  );
+  const value = process.env.FORM_TOKEN_SECRET;
+  if (process.env.NODE_ENV === "production" && (!value || value.length < 32)) {
+    throw new Error("FORM_TOKEN_SECRET must contain at least 32 characters");
+  }
+  return value || DEV_SECRET;
 }
+
+const DEV_SECRET = crypto.randomBytes(32).toString("hex");
 
 function b64url(buf) {
   return Buffer.from(buf)
@@ -25,7 +27,7 @@ function fromB64url(str) {
 /** Create short-lived token binding Messenger PSID */
 export function signFormToken(psid, ttlSec = 2 * 60 * 60) {
   const exp = Math.floor(Date.now() / 1000) + ttlSec;
-  const payload = `${psid}.${exp}`;
+  const payload = `${psid}.${exp}.${crypto.randomBytes(16).toString("hex")}`;
   const sig = crypto
     .createHmac("sha256", secret())
     .update(payload)
@@ -34,7 +36,7 @@ export function signFormToken(psid, ttlSec = 2 * 60 * 60) {
 }
 
 export function verifyFormToken(token) {
-  if (!token || typeof token !== "string" || !token.includes(".")) {
+  if (!token || typeof token !== "string" || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) {
     throw new Error("invalid token");
   }
   const [payloadB64, sigB64] = token.split(".");

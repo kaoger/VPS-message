@@ -39,7 +39,7 @@ export function renderFormPage({ token, error = "", prefill = {} }) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>三合需求快填（Demo）</title>
+  <title>三禾需求快填</title>
   <style>
     :root {
       --bg: #f4f6f8;
@@ -109,7 +109,7 @@ export function renderFormPage({ token, error = "", prefill = {} }) {
       ${fieldsHtml}
       <div class="actions">
         <button class="submit" type="submit">送出需求</button>
-        <p class="hint">Demo：送出後請回到 Messenger 查看摘要</p>
+        <p class="hint">送出後請回到 Messenger 查看摘要</p>
       </div>
     </form>
   </div>
@@ -160,7 +160,7 @@ export function renderFormPage({ token, error = "", prefill = {} }) {
 </html>`;
 }
 
-export function renderDonePage({ summary, messengerOk }) {
+export function renderDonePage({ summary, messengerOk, heading }) {
   return `<!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -179,7 +179,7 @@ export function renderDonePage({ summary, messengerOk }) {
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>${messengerOk ? "已送出，摘要已發到 Messenger" : "已收到表單（Messenger 回傳失敗，請看下方）"}</h1>
+      <h1>${escapeHtml(heading || (messengerOk ? "已送出，摘要已發到 Messenger" : "請查看下方處理結果"))}</h1>
       <pre>${escapeHtml(summary)}</pre>
       <p class="note">請回到粉專 Messenger 對話查看。可關閉此分頁。</p>
     </div>

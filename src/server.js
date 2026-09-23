@@ -1,5 +1,7 @@
 import "dotenv/config";
 import fs from "node:fs";
+import { pathToFileURL } from "node:url";
+import { validateEnvironment, validSignature, expiryStore, formRateLimit } from "./security.js";
 import express from "express";
 import {
   FLOW,
@@ -19,7 +21,7 @@ import {
   createCustomerLead,
   isSupabaseConfigured,
 } from "./supabase.js";
-import { signFormToken, verifyFormToken, publicBaseUrl } from "./form-token.js";
+import { signFormToken, verifyFormToken } from "./form-token.js";
 import {
   normalizeAnswers,
   validateAnswers,
@@ -27,9 +29,21 @@ import {
 } from "./form-schema.js";
 import { renderFormPage, renderDonePage } from "./form-page.js";
 
-const app = express();
-app.use(express.json());
+validateEnvironment();
+export const app = express();
+// Enable only for a known, single local reverse proxy that overwrites forwarding headers.
+if (process.env.TRUST_LOCAL_PROXY === "true") app.set("trust proxy", "loopback");
+app.use(express.json({ limit: "32kb", verify: (req, _res, buffer) => { req.rawBody = buffer; } }));
 app.use(express.urlencoded({ extended: false }));
+app.use((_req, res, next) => {
+  res.set({ "Referrer-Policy": "no-referrer", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+  next();
+});
+const submissions = expiryStore();
+const invites = expiryStore();
+const inviteMinutes = Number(process.env.INVITE_COOLDOWN_MINUTES || 30);
+if (!Number.isFinite(inviteMinutes) || inviteMinutes <= 0) throw new Error("Invalid INVITE_COOLDOWN_MINUTES");
+const cooldown = () => Date.now() + inviteMinutes * 60_000;
 
 const port = Number(process.env.PORT || 3000);
 /** webform = Messenger opens external form; chat = in-thread questions */
@@ -42,14 +56,14 @@ const liveSend = {
   urlButton: (id, t, spec) => meta.sendUrlButton(id, t, spec),
 };
 
-const LOG_PATH = "/tmp/sanhe-webhook.log";
+const LOG_PATH = process.env.LOG_PATH;
 
 function logEvent(...parts) {
   const line = `[${new Date().toISOString()}] ${parts
     .map((p) => (typeof p === "string" ? p : JSON.stringify(p)))
     .join(" ")}\n`;
   try {
-    fs.appendFileSync(LOG_PATH, line);
+    if (LOG_PATH) fs.appendFileSync(LOG_PATH, line);
   } catch {
     /* ignore */
   }
@@ -82,10 +96,12 @@ app.get("/webhook", (req, res) => {
 });
 
 app.post("/webhook", (req, res) => {
+  if (!validSignature(req.rawBody, req.get("X-Hub-Signature-256"), process.env.META_APP_SECRET)) {
+    return res.sendStatus(403);
+  }
   res.status(200).json({ received: true });
   void processWebhook(req.body).catch((error) => {
-    console.error("Webhook processing error:", error);
-    logEvent("webhook_error", String(error));
+    logEvent("webhook_error");
   });
 });
 
@@ -109,11 +125,12 @@ app.get("/form", (req, res) => {
   res.type("html").send(renderFormPage({ token }));
 });
 
-app.post("/form/submit", async (req, res) => {
+app.post("/form/submit", formRateLimit(), async (req, res) => {
   const token = String(req.body?.token || "");
   let psid;
+  let exp;
   try {
-    ({ psid } = verifyFormToken(token));
+    ({ psid, exp } = verifyFormToken(token));
   } catch {
     res
       .status(400)
@@ -137,6 +154,11 @@ app.post("/form/submit", async (req, res) => {
     return;
   }
 
+  if (!submissions.claim(token, exp * 1000)) {
+    return res.status(409).type("html").send(renderDonePage({ summary: "此表單已送出過或正在處理，請勿重複送出。", heading: "表單已送出", messengerOk: false }));
+  }
+  invites.remove(psid);
+  invites.claim(psid, cooldown());
   const summary = buildFormSummary(answers);
   let messengerOk = false;
   let messengerError = "";
@@ -146,15 +168,14 @@ app.post("/form/submit", async (req, res) => {
     try {
       await meta.sendText(psid, summary, "UPDATE");
     } catch (e1) {
-      logEvent("form_summary_update_fail", String(e1));
+      logEvent("form_summary_update_fail");
       await meta.sendText(psid, summary, "RESPONSE");
     }
     messengerOk = true;
-    logEvent("form_summary_sent", psid);
+    logEvent("form_summary_sent");
   } catch (error) {
-    messengerError = String(error);
-    logEvent("form_summary_fail", psid, messengerError);
-    console.error("form summary send failed:", error);
+    messengerError = "目前無法回傳訊息，請保留下方摘要並聯繫粉專。";
+    logEvent("form_summary_fail");
   }
 
   // Optional CRM write (only if configured)
@@ -177,10 +198,10 @@ app.post("/form/submit", async (req, res) => {
           contact_time: answers.contact_time,
         },
       });
-      logEvent("form_lead_inserted", psid);
+      logEvent("form_lead_inserted");
     } catch (error) {
-      logEvent("form_lead_fail", String(error));
-      console.error("form lead insert failed:", error);
+      logEvent("form_lead_fail");
+      return res.status(503).type("html").send(renderDonePage({ summary: "資料儲存失敗，請保留下方摘要並聯繫粉專。\n\n" + summary, heading: "資料儲存失敗", messengerOk }));
     }
   }
 
@@ -195,20 +216,7 @@ app.post("/form/submit", async (req, res) => {
 });
 
 async function processWebhook(body) {
-  logEvent("webhook_in", {
-    object: body?.object,
-    mode: DEMO_MODE,
-    events: (body?.entry ?? []).flatMap((e) =>
-      (e.messaging ?? []).map((m) => ({
-        sender: m?.sender?.id,
-        hasMessage: Boolean(m?.message),
-        hasPostback: Boolean(m?.postback),
-        payload:
-          m?.postback?.payload || m?.message?.quick_reply?.payload || null,
-        text: m?.message?.text ?? m?.postback?.title ?? null,
-      }))
-    ),
-  });
+  logEvent("webhook_in");
 
   if (body?.object !== "page") return;
 
@@ -221,7 +229,10 @@ async function processWebhook(body) {
         // Ignore echoes; any user message or postback → send form CTA
         if (event.message?.is_echo) continue;
         if (event.message || event.postback) {
-          await sendWebformInvite(senderId, publicBaseUrlFromEnv());
+          if (invites.claim(senderId, cooldown())) {
+            try { await sendWebformInvite(senderId, publicBaseUrlFromEnv()); }
+            catch { invites.remove(senderId); logEvent("webform_invite_fail"); }
+          }
         }
         continue;
       }
@@ -255,9 +266,7 @@ function publicBaseUrlFromEnv() {
 }
 
 async function sendWebformInvite(senderId, baseUrl) {
-  const base =
-    baseUrl ||
-    "https://never-donald-biz-respond.trycloudflare.com";
+  const base = baseUrl || "http://127.0.0.1:3000";
   const token = signFormToken(senderId);
   const formUrl = `${base}/form?t=${encodeURIComponent(token)}`;
 
@@ -269,9 +278,9 @@ async function sendWebformInvite(senderId, baseUrl) {
       title: "開始填表",
       url: formUrl,
     });
-    logEvent("webform_invite_sent", senderId);
+    logEvent("webform_invite_sent");
   } catch (error) {
-    logEvent("webform_invite_fail", String(error));
+    logEvent("webform_invite_fail");
     // Fallback: plain text with raw link
     await meta.sendText(
       senderId,
@@ -347,11 +356,14 @@ export async function handleIncoming(senderId, { text, payload }, send) {
     }
 
     if (isSubmit) {
+      if (session.submitting) return;
+      session.submitting = true;
+      saveSession(senderId, session);
       try {
-        if (!isSupabaseConfigured()) throw new Error("Supabase env not configured");
-        await createCustomerLead({ senderId, answers: session.answers });
+        if (isSupabaseConfigured()) await createCustomerLead({ senderId, answers: session.answers });
       } catch (error) {
-        console.error("customer_leads insert failed:", error);
+        session.submitting = false;
+        logEvent("customer_leads_insert_failed");
         await send.text(
           senderId,
           "送出時發生問題，請稍後再按「確認送出」。若持續失敗請聯繫客服。"
@@ -433,6 +445,7 @@ export async function handleIncoming(senderId, { text, payload }, send) {
 }
 
 // ---- local tests ----
+if (process.env.NODE_ENV !== "production") {
 app.post("/test/reset", (req, res) => {
   const senderId = String(req.body?.senderId || "test-user");
   deleteSession(senderId);
@@ -472,7 +485,7 @@ app.post("/test/message", async (req, res) => {
     if (DEMO_MODE === "webform") {
       const base =
         process.env.PUBLIC_BASE_URL ||
-        "https://never-donald-biz-respond.trycloudflare.com";
+        "http://127.0.0.1:3000";
       const token = signFormToken(senderId);
       await send.urlButton(senderId, "可以利用一分鐘快速填表…", {
         title: "開始填表",
@@ -483,12 +496,18 @@ app.post("/test/message", async (req, res) => {
     }
     res.json({ ok: true, senderId, outbox, session: getSession(senderId) });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ ok: false, error: String(error) });
+    logEvent("test_message_failed");
+    res.status(500).json({ ok: false, error: "Request failed" });
   }
 });
+}
 
-app.listen(port, "127.0.0.1", () => {
+app.use((error, _req, res, _next) => {
+  logEvent("request_failed");
+  res.status(error.status >= 400 && error.status < 500 ? error.status : 500).send("請求無法處理，請稍後再試。");
+});
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) app.listen(port, "127.0.0.1", () => {
   console.log(
     `sanhe-messenger-bot on 127.0.0.1:${port} mode=${DEMO_MODE} steps=${FLOW.length}`
   );

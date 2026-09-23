@@ -102,7 +102,7 @@ export const getFlow = () => FLOW;
 export const SUMMARY_LABELS = Object.freeze({ ...loaded.config.confirm.summary_labels });
 export const CONFIRM_OPTIONS = loaded.confirmOptions;
 export const SUBMIT_SUCCESS_TEXT = loaded.config.confirm.success_text;
-export const IS_TEST_BUILD = true;
+export const IS_TEST_BUILD = false;
 
 export function buildSummary(answers) {
   const lines = ["以下是您填寫的資料：", ""];
