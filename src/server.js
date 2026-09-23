@@ -111,6 +111,7 @@ app.post("/webhook", (req, res) => {
 const unavailable = "此連結無效、已過期或資料已更新。請回 Messenger 傳「修改需求」取得最新修改連結。";
 const baseUrl = () => publicBaseUrlFromEnv() || "http://127.0.0.1:3000";
 const editUrlFor = (psid, row) => `${baseUrl()}/form?t=${encodeURIComponent(editToken(psid, row))}`;
+const newFormUrlFor = psid => `${baseUrl()}/form?t=${encodeURIComponent(signFormToken(psid))}`;
 
 function formError(res, status, summary) {
   return res.status(status).type("html").send(renderDonePage({ summary, heading: "暫時無法處理", messengerOk: false }));
@@ -147,7 +148,12 @@ app.post("/form/submit", formRateLimit(), async (req, res) => {
   const err = validateAnswers(answers);
   if (err) return res.status(400).type("html").send(renderFormPage({ token, error: err, prefill: answers, editing: Boolean(edit) }));
   if (!submissions.claim(token, exp * 1000)) {
-    return formError(res, 409, "此表單已送出過或正在處理。請使用最新的「修改需求」連結。");
+    return res.status(409).type("html").send(renderDonePage({
+      heading: "這份表單已送出或正在處理",
+      summary: "若要測試另一筆或新增案件，請按下方「重新填寫（新增一筆）」。若要修改原資料，請回 Messenger 使用「修改需求」。",
+      messengerOk: false,
+      newFormUrl: newFormUrlFor(psid),
+    }));
   }
 
   const summary = (edit ? "需求已更新，以下為最新資料：\n\n" : "") + buildFormSummary(answers);
@@ -182,7 +188,7 @@ app.post("/form/submit", formRateLimit(), async (req, res) => {
   res.type("html").send(renderDonePage({
     summary: summary + notice,
     heading: edit ? "需求已更新" : "需求已送出",
-    messengerOk, editUrl,
+    messengerOk, editUrl, newFormUrl: newFormUrlFor(psid),
   }));
 });
 async function processWebhook(body) {

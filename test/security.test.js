@@ -147,6 +147,20 @@ test("concurrent duplicate submission produces exactly one insert and message", 
   const responses = await Promise.all([submit(token), submit(token)]);
   assert.deepEqual(responses.map(r => r.status).sort(), [200, 409]);
   assert.deepEqual([sends - previous[0], inserts - previous[1]], [2, 1]);
+  const duplicateHtml = await responses.find(r => r.status === 409).text();
+  const nextUrl = duplicateHtml.match(/id="new-form-link" href="([^"]+)"/)[1];
+  const nextToken = new URL(nextUrl).searchParams.get("t");
+  assert.notEqual(nextToken, token);
+  assert.equal(verifyFormToken(nextToken).psid, "duplicate-test");
+  assert.equal(verifyFormToken(nextToken).edit, null);
+  const nextForm = await request("/form?t=" + encodeURIComponent(nextToken));
+  assert.equal(nextForm.status, 200);
+  assert.doesNotMatch(await nextForm.text(), /value="測試姓名"/);
+  const nextResult = await submit(nextToken);
+  assert.equal(nextResult.status, 200);
+  assert.match(await nextResult.text(), /重新填寫（新增一筆）/);
+  assert.equal((await submit(nextToken)).status, 409);
+  assert.deepEqual([sends - previous[0], inserts - previous[1]], [4, 2]);
 });
 test("database failure is visible without exposing backend details or replaying effects", async () => {
   failDb = true;

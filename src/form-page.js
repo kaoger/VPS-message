@@ -160,7 +160,7 @@ export function renderFormPage({ token, error = "", prefill = {}, editing = fals
 </html>`;
 }
 
-export function renderDonePage({ summary, messengerOk, heading, editUrl }) {
+export function renderDonePage({ summary, messengerOk, heading, editUrl, newFormUrl }) {
   return `<!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -182,6 +182,7 @@ export function renderDonePage({ summary, messengerOk, heading, editUrl }) {
       <h1>${escapeHtml(heading || (messengerOk ? "已送出，摘要已發到 Messenger" : "請查看下方處理結果"))}</h1>
       <pre>${escapeHtml(summary)}</pre>
       ${editUrl ? `<p><a href="${escapeHtml(editUrl)}">修改需求</a></p><p class="note">修改連結兩小時內有效，請勿轉傳。過期後請在 Messenger 傳「修改需求」。</p>` : ""}
+      ${newFormUrl ? `<p><a id="new-form-link" href="${escapeHtml(newFormUrl)}" style="display:inline-block;padding:12px 16px;background:#1877f2;color:#fff;border-radius:12px;text-decoration:none">重新填寫（新增一筆）</a></p><p class="note">會開啟空白表單，填完送出才新增一筆需求，不會覆蓋原資料。</p>` : ""}
       <p class="note">請回到粉專 Messenger 對話查看。可關閉此分頁。</p>
     </div>
   </div>
