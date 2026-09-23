@@ -22,10 +22,12 @@ import {
   isSupabaseConfigured,
 } from "./supabase.js";
 import { signFormToken, verifyFormToken } from "./form-token.js";
+import { editToken, loadLead, saveLead, isCurrentVersion } from "./lead-edit.js";
 import {
   normalizeAnswers,
   validateAnswers,
   buildFormSummary,
+  FORM_FIELDS,
 } from "./form-schema.js";
 import { renderFormPage, renderDonePage } from "./form-page.js";
 
@@ -105,116 +107,84 @@ app.post("/webhook", (req, res) => {
   });
 });
 
-// ---- Web form demo ----
-app.get("/form", (req, res) => {
+// ---- Web form ----
+const unavailable = "此連結無效、已過期或資料已更新。請回 Messenger 傳「修改需求」取得最新修改連結。";
+const baseUrl = () => publicBaseUrlFromEnv() || "http://127.0.0.1:3000";
+const editUrlFor = (psid, row) => `${baseUrl()}/form?t=${encodeURIComponent(editToken(psid, row))}`;
+
+function formError(res, status, summary) {
+  return res.status(status).type("html").send(renderDonePage({ summary, heading: "暫時無法處理", messengerOk: false }));
+}
+
+app.get("/form", async (req, res) => {
   const token = String(req.query.t || "");
-  try {
-    verifyFormToken(token);
-  } catch {
-    res
-      .status(400)
-      .type("html")
-      .send(
-        renderDonePage({
-          summary: "連結無效或已過期。請回到 Messenger 再傳一次訊息，取得新的填表連結。",
-          messengerOk: false,
-        })
-      );
-    return;
+  let claims;
+  try { claims = verifyFormToken(token); }
+  catch { return formError(res, 400, unavailable); }
+  let prefill = {};
+  if (claims.edit) {
+    try {
+      const row = await loadLead(claims.psid, claims.edit);
+      if (!isCurrentVersion(row, claims.edit)) return formError(res, 409, unavailable);
+      prefill = { ...row.answers };
+      // Older records stored the typed region directly in area.
+      if (prefill.area && !FORM_FIELDS.find(f => f.key === "area")?.options?.includes(prefill.area)) {
+        prefill.area_other = prefill.area;
+        prefill.area = "其他地區";
+      }
+    } catch { logEvent("form_load_fail"); return formError(res, 503, "目前無法讀取需求，請稍後重試。"); }
   }
-  res.type("html").send(renderFormPage({ token }));
+  res.type("html").send(renderFormPage({ token, prefill, editing: Boolean(claims.edit) }));
 });
 
 app.post("/form/submit", formRateLimit(), async (req, res) => {
   const token = String(req.body?.token || "");
-  let psid;
-  let exp;
-  try {
-    ({ psid, exp } = verifyFormToken(token));
-  } catch {
-    res
-      .status(400)
-      .type("html")
-      .send(
-        renderDonePage({
-          summary: "連結無效或已過期。請回 Messenger 重開表單。",
-          messengerOk: false,
-        })
-      );
-    return;
-  }
-
+  let claims;
+  try { claims = verifyFormToken(token); }
+  catch { return formError(res, 400, unavailable); }
+  const { psid, exp, edit } = claims;
   const answers = normalizeAnswers(req.body || {});
   const err = validateAnswers(answers);
-  if (err) {
-    res
-      .status(400)
-      .type("html")
-      .send(renderFormPage({ token, error: err, prefill: answers }));
-    return;
+  if (err) return res.status(400).type("html").send(renderFormPage({ token, error: err, prefill: answers, editing: Boolean(edit) }));
+  if (!submissions.claim(token, exp * 1000)) {
+    return formError(res, 409, "此表單已送出過或正在處理。請使用最新的「修改需求」連結。");
   }
 
-  if (!submissions.claim(token, exp * 1000)) {
-    return res.status(409).type("html").send(renderDonePage({ summary: "此表單已送出過或正在處理，請勿重複送出。", heading: "表單已送出", messengerOk: false }));
+  const summary = (edit ? "需求已更新，以下為最新資料：\n\n" : "") + buildFormSummary(answers);
+  let row;
+  try {
+    row = await saveLead(psid, answers, edit);
+    if (!row) return formError(res, 409, unavailable);
+    logEvent(edit ? "form_lead_updated" : "form_lead_inserted");
+  } catch {
+    logEvent("form_lead_fail");
+    return formError(res, 503, "資料儲存失敗，尚未確認成功。請保留下方摘要並聯繫粉專。\n\n" + buildFormSummary(answers));
   }
   invites.remove(psid);
   invites.claim(psid, cooldown());
-  const summary = buildFormSummary(answers);
+  const editUrl = editUrlFor(psid, row);
   let messengerOk = false;
-  let messengerError = "";
-
+  let notice = "";
   try {
-    // Outside webhook turn: prefer UPDATE (24h window), fall back to RESPONSE
-    try {
-      await meta.sendText(psid, summary, "UPDATE");
-    } catch (e1) {
-      logEvent("form_summary_update_fail");
-      await meta.sendText(psid, summary, "RESPONSE");
-    }
+    await meta.sendText(psid, summary, "RESPONSE");
     messengerOk = true;
     logEvent("form_summary_sent");
-  } catch (error) {
-    messengerError = "目前無法回傳訊息，請保留下方摘要並聯繫粉專。";
+  } catch {
+    notice = "\n\n目前無法回傳訊息，請保留下方摘要並聯繫粉專。";
     logEvent("form_summary_fail");
   }
-
-  // Optional CRM write (only if configured)
-  if (isSupabaseConfigured()) {
-    try {
-      const area =
-        answers.area === "其他地區" && answers.area_other
-          ? answers.area_other
-          : answers.area;
-      await createCustomerLead({
-        senderId: psid,
-        answers: {
-          service: answers.service,
-          area,
-          size: answers.size,
-          timeline: answers.timeline,
-          budget: answers.budget,
-          name: answers.name,
-          phone: answers.phone,
-          contact_time: answers.contact_time,
-        },
-      });
-      logEvent("form_lead_inserted");
-    } catch (error) {
-      logEvent("form_lead_fail");
-      return res.status(503).type("html").send(renderDonePage({ summary: "資料儲存失敗，請保留下方摘要並聯繫粉專。\n\n" + summary, heading: "資料儲存失敗", messengerOk }));
-    }
+  try {
+    await meta.sendUrlButton(psid, "如需調整這筆需求，請點「修改需求」。連結兩小時內有效；過期可傳「修改需求」取得新連結。另有新案件可傳「新增需求」。", { title: "修改需求", url: editUrl });
+  } catch {
+    notice += "\n\n修改按鈕未能傳到 Messenger，仍可使用本頁的「修改需求」。";
+    logEvent("form_edit_button_fail");
   }
-
-  res.type("html").send(
-    renderDonePage({
-      summary: messengerOk
-        ? summary
-        : `${summary}\n\n（Messenger 回傳失敗：${messengerError}）`,
-      messengerOk,
-    })
-  );
+  res.type("html").send(renderDonePage({
+    summary: summary + notice,
+    heading: edit ? "需求已更新" : "需求已送出",
+    messengerOk, editUrl,
+  }));
 });
-
 async function processWebhook(body) {
   logEvent("webhook_in");
 
@@ -228,6 +198,19 @@ async function processWebhook(body) {
       if (DEMO_MODE === "webform") {
         // Ignore echoes; any user message or postback → send form CTA
         if (event.message?.is_echo) continue;
+        const command = (event.message?.text || event.postback?.payload || "").trim();
+        if (command === "修改需求") {
+          try {
+            const row = await loadLead(senderId);
+            if (row) await meta.sendUrlButton(senderId, "請修改最近一筆需求，確認後再送出。", { title: "修改需求", url: editUrlFor(senderId, row) });
+            else await meta.sendText(senderId, "目前找不到可修改的需求。若要建立新案件，請傳「新增需求」。");
+          } catch { logEvent("edit_invite_fail"); }
+          continue;
+        }
+        if (command === "新增需求") {
+          await sendWebformInvite(senderId, publicBaseUrlFromEnv());
+          continue;
+        }
         if (event.message || event.postback) {
           if (invites.claim(senderId, cooldown())) {
             try { await sendWebformInvite(senderId, publicBaseUrlFromEnv()); }

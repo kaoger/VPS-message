@@ -1,7 +1,7 @@
 import { FORM_FIELDS } from "./form-schema.js";
 
 /** Mobile-first demo form HTML */
-export function renderFormPage({ token, error = "", prefill = {} }) {
+export function renderFormPage({ token, error = "", prefill = {}, editing = false }) {
   const fieldsHtml = FORM_FIELDS.map((f) => {
     if (f.type === "choice") {
       const opts = f.options
@@ -100,15 +100,15 @@ export function renderFormPage({ token, error = "", prefill = {} }) {
 <body>
   <div class="wrap">
     <div class="hero">
-      <h1>一分鐘需求快填</h1>
-      <p>可以利用一分鐘快速填表，讓我們迅速掌握您的需求。<br/>送出後，摘要會回到 Messenger 對話。</p>
+      <h1>${editing ? "修改需求" : "一分鐘需求快填"}</h1>
+      <p>${editing ? "已帶入上次的資料，請調整後確認送出，更新同一筆需求。" : "可以利用一分鐘快速填表，讓我們迅速掌握您的需求。"}<br/>送出後，摘要會回到 Messenger 對話。</p>
     </div>
     <div class="err" id="err">${escapeHtml(error)}</div>
     <form id="form" method="post" action="/form/submit">
       <input type="hidden" name="token" value="${escapeHtml(token)}" />
       ${fieldsHtml}
       <div class="actions">
-        <button class="submit" type="submit">送出需求</button>
+        <button class="submit" type="submit">${editing ? "確認修改並送出" : "送出需求"}</button>
         <p class="hint">送出後請回到 Messenger 查看摘要</p>
       </div>
     </form>
@@ -160,7 +160,7 @@ export function renderFormPage({ token, error = "", prefill = {} }) {
 </html>`;
 }
 
-export function renderDonePage({ summary, messengerOk, heading }) {
+export function renderDonePage({ summary, messengerOk, heading, editUrl }) {
   return `<!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -181,6 +181,7 @@ export function renderDonePage({ summary, messengerOk, heading }) {
     <div class="card">
       <h1>${escapeHtml(heading || (messengerOk ? "已送出，摘要已發到 Messenger" : "請查看下方處理結果"))}</h1>
       <pre>${escapeHtml(summary)}</pre>
+      ${editUrl ? `<p><a href="${escapeHtml(editUrl)}">修改需求</a></p><p class="note">修改連結兩小時內有效，請勿轉傳。過期後請在 Messenger 傳「修改需求」。</p>` : ""}
       <p class="note">請回到粉專 Messenger 對話查看。可關閉此分頁。</p>
     </div>
   </div>

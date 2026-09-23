@@ -25,9 +25,9 @@ function fromB64url(str) {
 }
 
 /** Create short-lived token binding Messenger PSID */
-export function signFormToken(psid, ttlSec = 2 * 60 * 60) {
+export function signFormToken(psid, ttlSec = 2 * 60 * 60, edit = null) {
   const exp = Math.floor(Date.now() / 1000) + ttlSec;
-  const payload = `${psid}.${exp}.${crypto.randomBytes(16).toString("hex")}`;
+  const payload = `${psid}.${exp}.${crypto.randomBytes(16).toString("hex")}${edit ? "." + b64url(JSON.stringify(edit)) : ""}`;
   const sig = crypto
     .createHmac("sha256", secret())
     .update(payload)
@@ -56,12 +56,14 @@ export function verifyFormToken(token) {
   ) {
     throw new Error("bad signature");
   }
-  const [psid, expStr] = payload.split(".");
+  const [psid, expStr, , editData] = payload.split(".");
   const exp = Number(expStr);
   if (!psid || !exp || Date.now() / 1000 > exp) {
     throw new Error("token expired");
   }
-  return { psid, exp };
+  const edit = editData ? JSON.parse(fromB64url(editData)) : null;
+  if (edit && (!edit.id || !["db", "memory"].includes(edit.storage) || !/^[a-f0-9]{64}$/.test(edit.version))) throw new Error("invalid edit token");
+  return { psid, exp, edit };
 }
 
 export function publicBaseUrl(req) {

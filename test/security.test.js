@@ -17,23 +17,43 @@ const realFetch = globalThis.fetch;
 const realLog = console.log;
 const logs = [];
 console.log = (...args) => logs.push(args.join(" "));
-let sends = 0, inserts = 0, failDb = false, failMeta = false;
+let sends = 0, inserts = 0, updates = 0, failDb = false, failMeta = false;
+const rows = new Map();
+const messages = [];
 globalThis.fetch = async (url, options) => {
   const value = String(url);
   if (value.startsWith("https://graph.facebook.com/")) {
     sends++;
+    messages.push(JSON.parse(options.body));
     assert.equal(new URL(value).search, "");
     assert.equal(options.headers.Authorization, "Bearer test-page-token");
     return new Response("{}", { status: failMeta ? 500 : 200 });
   }
   if (value.startsWith("https://example.supabase.co/rest/")) {
-    inserts++;
-    assert.equal(options.method, "POST");
-    const row = JSON.parse(options.body);
-    assert.equal(row.customer_name, "測試姓名");
-    return new Response(JSON.stringify(failDb ? { message: "private database error" } : { id: 1 }), {
-      status: failDb ? 400 : 201, headers: { "content-type": "application/json" },
-    });
+    if (failDb) return new Response(JSON.stringify({ message: "private database error" }), { status: 400 });
+    const params = new URL(value).searchParams;
+    if (options.method === "POST") {
+      inserts++;
+      const row = { ...JSON.parse(options.body), id: String(inserts) };
+      rows.set(row.id, row);
+      return Response.json({ id: row.id }, { status: 201 });
+    }
+    const sender = params.get("messenger_user_id");
+    assert.ok(sender?.startsWith("eq."), "All reads and updates must check ownership");
+    const id = params.get("id")?.slice(3);
+    const matches = [...rows.values()].filter(row => row.messenger_user_id === sender.slice(3) && (!id || id === row.id));
+    if (options.method === "GET") return Response.json(id ? matches : matches.slice(-1));
+    assert.equal(options.method, "PATCH");
+    assert.ok(id, "Update must target a specific lead");
+    const previous = params.get("answers");
+    assert.ok(previous?.startsWith("eq."), "Update must use compare-and-swap");
+    const row = matches.find(r => JSON.stringify(r.answers) === previous.slice(3));
+    if (!row) return Response.json(null);
+    updates++;
+    const changes = JSON.parse(options.body);
+    assert.ok(!("status" in changes) && !("completed_at" in changes), "Edits preserve business workflow and original time");
+    Object.assign(row, changes);
+    return Response.json({ id: row.id });
   }
   if (value.startsWith("http://127.0.0.1:3000/")) return realFetch(url, options);
   throw new Error("Unexpected network destination");
@@ -115,7 +135,7 @@ test("concurrent duplicate submission produces exactly one insert and message", 
   const token = signFormToken("duplicate-test");
   const responses = await Promise.all([submit(token), submit(token)]);
   assert.deepEqual(responses.map(r => r.status).sort(), [200, 409]);
-  assert.deepEqual([sends - previous[0], inserts - previous[1]], [1, 1]);
+  assert.deepEqual([sends - previous[0], inserts - previous[1]], [2, 1]);
 });
 test("database failure is visible without exposing backend details or replaying effects", async () => {
   failDb = true;
@@ -162,6 +182,79 @@ test("without database credentials, chat still reaches confirmation and completi
     assert.match(outbox.at(-1), /感謝/);
     assert.equal((await submit(signFormToken("no-db"))).status, 200);
   } finally { process.env.SUPABASE_SECRET_KEY = key; }
+});
+test("edits prefill and update the same lead; stale or forged ownership cannot overwrite it", async () => {
+  const original = [...rows.values()].find(row => row.messenger_user_id === "duplicate-test");
+  const firstMessage = messages.find(m => m.recipient.id === "duplicate-test" && m.message.attachment);
+  const link = firstMessage.message.attachment.payload.buttons[0].url;
+  const token = new URL(link).searchParams.get("t");
+  const claims = verifyFormToken(token);
+  assert.equal(claims.edit.id, original.id);
+  const page = await request("/form?t=" + encodeURIComponent(token));
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /確認修改並送出/);
+  const counts = [inserts, updates];
+  const changed = { ...answers, phone: "0999999999", area: "其他地區", area_other: "屏東" };
+  const results = await Promise.all([submit(token, changed), submit(token, changed)]);
+  assert.deepEqual(results.map(r => r.status).sort(), [200, 409]);
+  assert.deepEqual([inserts, updates], [counts[0], counts[1] + 1]);
+  assert.equal(original.phone, "0999999999");
+  assert.equal(original.location, "屏東");
+  assert.equal(original.answers.area, "其他地區");
+  assert.equal((await request("/form?t=" + encodeURIComponent(token))).status, 409);
+  // A different token with the old version simulates replay after in-memory claims are lost.
+  const stale = signFormToken("duplicate-test", 7200, claims.edit);
+  assert.equal((await submit(stale)).status, 409);
+  const wrongOwner = signFormToken("different-person", 7200, claims.edit);
+  assert.equal((await request("/form?t=" + encodeURIComponent(wrongOwner))).status, 409);
+  assert.equal((await submit(wrongOwner)).status, 409);
+  const latestMessage = messages.filter(m => m.recipient.id === "duplicate-test" && m.message.attachment).at(-1);
+  const latest = new URL(latestMessage.message.attachment.payload.buttons[0].url).searchParams.get("t");
+  const latestHtml = await (await request("/form?t=" + encodeURIComponent(latest))).text();
+  assert.match(latestHtml, /0999999999/);
+  assert.match(latestHtml, /屏東/);
+  // Actual edit failure never inserts a replacement lead or announces success.
+  const before = [inserts, updates, sends];
+  failDb = true;
+  try { assert.equal((await submit(latest, changed)).status, 503); }
+  finally { failDb = false; }
+  assert.deepEqual([inserts, updates, sends], before);
+});
+test("edit command bypasses invitation cooldown and new-demand command creates a fresh form", async () => {
+  for (const command of ["修改需求", "新增需求"]) {
+    const count = messages.length;
+    await webhook(JSON.stringify({ object: "page", entry: [{ messaging: [{ sender: { id: "duplicate-test" }, message: { text: command } }] }] }));
+    for (let i = 0; i < 20 && messages.length === count; i++) await new Promise(r => setTimeout(r, 5));
+    assert.equal(messages.length, count + 1);
+    const token = new URL(messages.at(-1).message.attachment.payload.buttons[0].url).searchParams.get("t");
+    assert.equal(Boolean(verifyFormToken(token).edit), command === "修改需求");
+  }
+});
+test("memory-only submissions can be edited without creating database rows", async () => {
+  const key = process.env.SUPABASE_SECRET_KEY;
+  process.env.SUPABASE_SECRET_KEY = "";
+  try {
+    const message = messages.find(m => m.recipient.id === "no-db" && m.message.attachment);
+    const token = new URL(message.message.attachment.payload.buttons[0].url).searchParams.get("t");
+    assert.equal((await request("/form?t=" + encodeURIComponent(token))).status, 200);
+    const before = [inserts, updates];
+    assert.equal((await submit(token, { ...answers, phone: "0988888888" })).status, 200);
+    assert.deepEqual([inserts, updates], before);
+  } finally { process.env.SUPABASE_SECRET_KEY = key; }
+});
+test("two distinct edit links for one version cannot both update; expired edit links cannot read data", async () => {
+  const { editToken, loadLead } = await import("../src/lead-edit.js");
+  const row = await loadLead("duplicate-test");
+  const first = editToken("duplicate-test", row);
+  const second = editToken("duplicate-test", row);
+  const before = updates;
+  const results = await Promise.all([submit(first), submit(second)]);
+  assert.deepEqual(results.map(r => r.status).sort(), [200, 409]);
+  assert.equal(updates, before + 1);
+  const expired = signFormToken("duplicate-test", -1, verifyFormToken(first).edit);
+  const response = await request("/form?t=" + encodeURIComponent(expired));
+  assert.equal(response.status, 400);
+  assert.doesNotMatch(await response.text(), /測試姓名|0912345678/);
 });
 test("rate limit rejects excessive form submissions", async () => {
   let response;

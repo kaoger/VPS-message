@@ -32,7 +32,7 @@ export async function createCustomerLead({ senderId, answers }) {
     status: "complete",
     messenger_user_id: senderId,
     answers,
-    location: answers.area ?? null,
+    location: answers.area === "其他地區" ? answers.area_other : answers.area ?? null,
     project_type: answers.service ?? null,
     interior_area: answers.size ?? null,
     budget_range: answers.budget ?? null,
@@ -49,6 +49,35 @@ export async function createCustomerLead({ senderId, answers }) {
     .select("id")
     .maybeSingle();
 
+  if (error) throw error;
+  if (!data?.id) throw new Error("Insert returned no lead");
+  return data;
+}
+
+export async function readCustomerLead({ senderId, id }) {
+  let query = getClient().from("customer_leads").select("id,answers")
+    .eq("messenger_user_id", senderId);
+  query = id ? query.eq("id", id) : query.order("completed_at", { ascending: false }).limit(1);
+  const { data, error } = await query.maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateCustomerLead({ senderId, id, previousAnswers, answers }) {
+  // Compare-and-swap protects against stale forms, even across server restarts.
+  // Never reset workflow status or the original submission timestamp.
+  const { data, error } = await getClient().from("customer_leads").update({
+    answers,
+    location: answers.area === "其他地區" ? answers.area_other : answers.area ?? null,
+    project_type: answers.service ?? null,
+    interior_area: answers.size ?? null,
+    budget_range: answers.budget ?? null,
+    start_time: answers.timeline ?? null,
+    customer_name: answers.name ?? null,
+    phone: answers.phone ?? null,
+    notification_status: "pending",
+  }).eq("id", id).eq("messenger_user_id", senderId)
+    .eq("answers", JSON.stringify(previousAnswers)).select("id").maybeSingle();
   if (error) throw error;
   return data;
 }
