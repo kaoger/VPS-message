@@ -146,7 +146,11 @@ test("concurrent duplicate submission produces exactly one insert and message", 
   const token = signFormToken("duplicate-test");
   const responses = await Promise.all([submit(token), submit(token)]);
   assert.deepEqual(responses.map(r => r.status).sort(), [200, 409]);
-  assert.deepEqual([sends - previous[0], inserts - previous[1]], [2, 1]);
+  assert.deepEqual([sends - previous[0], inserts - previous[1]], [3, 1]);
+  const invitation = messages.find(m => m.recipient.id === "duplicate-test" && m.message.attachment?.payload.buttons[0].title === "加入官方 LINE");
+  assert.match(invitation.message.attachment.payload.text, /感謝您的填寫/);
+  assert.match(invitation.message.attachment.payload.text, /溝通需求、傳送照片/);
+  assert.equal(invitation.message.attachment.payload.buttons[0].url, "https://line.me/R/ti/p/@662gzsyl?oat_content=url&ts=09240050");
   const duplicateHtml = await responses.find(r => r.status === 409).text();
   const nextUrl = duplicateHtml.match(/id="new-form-link" href="([^"]+)"/)[1];
   const nextToken = new URL(nextUrl).searchParams.get("t");
@@ -160,7 +164,7 @@ test("concurrent duplicate submission produces exactly one insert and message", 
   assert.equal(nextResult.status, 200);
   assert.match(await nextResult.text(), /重新填寫（新增一筆）/);
   assert.equal((await submit(nextToken)).status, 409);
-  assert.deepEqual([sends - previous[0], inserts - previous[1]], [4, 2]);
+  assert.deepEqual([sends - previous[0], inserts - previous[1]], [6, 2]);
 });
 test("database failure is visible without exposing backend details or replaying effects", async () => {
   failDb = true;
@@ -233,7 +237,9 @@ test("edits prefill and update the same lead; stale or forged ownership cannot o
   const wrongOwner = signFormToken("different-person", 7200, claims.edit);
   assert.equal((await request("/form?t=" + encodeURIComponent(wrongOwner))).status, 409);
   assert.equal((await submit(wrongOwner)).status, 409);
-  const latestMessage = messages.filter(m => m.recipient.id === "duplicate-test" && m.message.attachment).at(-1);
+  const latestMessage = messages.filter(m => m.recipient.id === "duplicate-test" && m.message.attachment?.payload.buttons[0].title === "修改需求").at(-1);
+  const lineUpdate = messages.filter(m => m.recipient.id === "duplicate-test" && m.message.attachment?.payload.buttons[0].title === "加入官方 LINE").at(-1);
+  assert.match(lineUpdate.message.attachment.payload.text, /感謝您的更新/);
   const latest = new URL(latestMessage.message.attachment.payload.buttons[0].url).searchParams.get("t");
   const latestHtml = await (await request("/form?t=" + encodeURIComponent(latest))).text();
   assert.match(latestHtml, /0999999999/);

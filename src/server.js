@@ -17,6 +17,7 @@ import {
   createSession,
 } from "./session-store.js";
 import * as meta from "./meta.js";
+import { OFFICIAL_LINE_URL, lineThankYouText } from "./contact.js";
 import {
   createCustomerLead,
   isSupabaseConfigured,
@@ -184,6 +185,14 @@ app.post("/form/submit", formRateLimit(), async (req, res) => {
   } catch {
     notice += "\n\n修改按鈕未能傳到 Messenger，仍可使用本頁的「修改需求」。";
     logEvent("form_edit_button_fail");
+  }
+  try {
+    await meta.sendUrlButton(psid, lineThankYouText(Boolean(edit)), {
+      title: "加入官方 LINE", url: OFFICIAL_LINE_URL,
+    });
+  } catch {
+    logEvent("form_line_button_fail");
+    notice += "\n\n官方 LINE 邀請未能傳到 Messenger，可用此連結加入：" + OFFICIAL_LINE_URL;
   }
   res.type("html").send(renderDonePage({
     summary: summary + notice,
