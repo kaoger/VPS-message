@@ -1,6 +1,12 @@
 import { FLOW, SUMMARY_LABELS } from "./flow.js";
 
-// Both Messenger and the web form use QUESTIONS_PATH / config/questions.json.
+// Share field order/options, but preserve the original web-form wording.
+const WEB_FORM_COPY = {
+  area: { label: "請問您需要的服務地區是？", otherLabel: "請輸入地區名稱" },
+  name: { label: "請留下您的姓名，方便我們稱呼您", placeholder: "例如：王先生" },
+  phone: { label: "請留下聯絡電話（09 開頭 10 碼）", placeholder: "0912345678", pattern: "^09\\d{8}$" },
+};
+
 export const FORM_FIELDS = FLOW.map(step => ({
   key: step.key,
   label: step.text,
@@ -13,6 +19,7 @@ export const FORM_FIELDS = FLOW.map(step => ({
   } : {}),
   validate: step.validate,
   errorText: step.errorText,
+  ...WEB_FORM_COPY[step.key],
 }));
 
 export function buildFormSummary(answers) {

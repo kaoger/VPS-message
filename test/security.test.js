@@ -1,6 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import { FORM_FIELDS as ORIGINAL_FORM_FIELDS } from "../fixtures/original-form-fields.js";
 import { validateEnvironment, validSignature, expiryStore } from "../src/security.js";
 
 // Never load local credentials or contact real Meta / Supabase services.
@@ -103,7 +104,11 @@ test("form renders shared questions and escapes customer-supplied values", async
   const html = await response.text();
   assert.match(html, /三禾需求快填/);
   assert.doesNotMatch(html, /Demo|三合/);
-  for (const step of FLOW) assert.ok(html.includes(step.text));
+  for (const field of ORIGINAL_FORM_FIELDS) {
+    assert.ok(html.includes(field.label));
+    if (field.placeholder) assert.ok(html.includes(`placeholder="${field.placeholder}"`));
+    if (field.otherLabel) assert.ok(html.includes(field.otherLabel));
+  }
   const invalid = await submit(signFormToken("escape"), { ...answers, name: '<script>alert(1)</script>', phone: "bad" });
   assert.doesNotMatch(await invalid.text(), /<script>alert\(1\)<\/script>/);
 });
@@ -119,6 +124,12 @@ test("tokens reject tampering / expiry; independent invites have unique tokens",
   assert.equal(store.claim("key", Date.now() + 1000), false);
 });
 test("shared schema validates choices, phone and other area", () => {
+  for (const [index, original] of ORIGINAL_FORM_FIELDS.entries()) {
+    for (const [key, value] of Object.entries(original)) {
+      assert.deepEqual(FORM_FIELDS[index][key], value, `Original field ${original.key}.${key} must stay unchanged`);
+    }
+  }
+  assert.equal(FORM_FIELDS.length, ORIGINAL_FORM_FIELDS.length);
   assert.deepEqual(FORM_FIELDS.map(f => f.key), FLOW.map(f => f.key));
   assert.equal(validateAnswers(answers), null);
   for (const values of [{ service: "unknown" }, { phone: "123" }, { name: "" }, { area: "其他地區" }]) assert.ok(validateAnswers({ ...answers, ...values }));
