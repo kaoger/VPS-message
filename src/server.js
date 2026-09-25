@@ -21,6 +21,8 @@ import { OFFICIAL_LINE_URL, lineThankYouText } from "./contact.js";
 import {
   createCustomerLead,
   isSupabaseConfigured,
+  claimAutomaticInvite,
+  releaseAutomaticInvite,
 } from "./supabase.js";
 import { signFormToken, verifyFormToken } from "./form-token.js";
 import { editToken, loadLead, saveLead, isCurrentVersion } from "./lead-edit.js";
@@ -45,14 +47,13 @@ app.use((_req, res, next) => {
 });
 const submissions = expiryStore();
 const invites = expiryStore();
-const inviteMinutes = Number(process.env.INVITE_COOLDOWN_MINUTES || 30);
-if (!Number.isFinite(inviteMinutes) || inviteMinutes <= 0) throw new Error("Invalid INVITE_COOLDOWN_MINUTES");
-const cooldown = () => Date.now() + inviteMinutes * 60_000;
 
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || "127.0.0.1";
 /** webform = Messenger opens external form; chat = in-thread questions */
 const DEMO_MODE = (process.env.DEMO_MODE || "webform").toLowerCase();
+// Enable only after bot.sameheart-design.com is whitelisted in Meta Messenger settings.
+const MESSENGER_WEBVIEW_ENABLED = process.env.MESSENGER_WEBVIEW_ENABLED === "true";
 
 const liveSend = {
   text: (id, t, mt) => meta.sendText(id, t, mt),
@@ -171,8 +172,6 @@ app.post("/form/submit", formRateLimit(), async (req, res) => {
     logEvent("form_lead_fail");
     return formError(res, 503, "資料儲存失敗，尚未確認成功。請保留下方摘要並聯繫粉專。\n\n" + buildFormSummary(answers));
   }
-  invites.remove(psid);
-  invites.claim(psid, cooldown());
   const editUrl = editUrlFor(psid, row);
   let messengerOk = false;
   let notice = "";
@@ -202,6 +201,7 @@ app.post("/form/submit", formRateLimit(), async (req, res) => {
     summary: summary + notice,
     heading: edit ? "需求已更新" : "需求已送出",
     messengerOk, editUrl, newFormUrl: newFormUrlFor(psid),
+    autoReturnToMessenger: MESSENGER_WEBVIEW_ENABLED,
   }));
 });
 async function processWebhook(body) {
@@ -215,13 +215,13 @@ async function processWebhook(body) {
       if (!senderId) continue;
 
       if (DEMO_MODE === "webform") {
-        // Ignore echoes and only invite on explicit service-entry events.
+        // Keep the four service entries; ordinary text gets a generic invite.
         if (event.message?.is_echo) continue;
         const command = (event.message?.text || event.postback?.payload || "").trim();
         if (command === "修改需求") {
           try {
             const row = await loadLead(senderId);
-            if (row) await meta.sendUrlButton(senderId, "請修改最近一筆需求，確認後再送出。", { title: "修改需求", url: editUrlFor(senderId, row) });
+            if (row) await meta.sendUrlButton(senderId, "請修改最近一筆需求，確認後再送出。", { title: "修改需求", url: editUrlFor(senderId, row), messengerExtensions: MESSENGER_WEBVIEW_ENABLED });
             else await meta.sendText(senderId, "目前找不到可修改的需求。若要建立新案件，請傳「新增需求」。");
           } catch { logEvent("edit_invite_fail"); }
           continue;
@@ -235,10 +235,18 @@ async function processWebhook(body) {
             text: event.message?.text || "",
             payload: event.message?.quick_reply?.payload || event.postback?.payload || "",
           });
-          if (!service) continue;
-          if (invites.claim(senderId, cooldown())) {
+          const text = (event.message?.text || "").trim();
+          const isExistingMetaFaq = [
+            "初步洽談諮詢需要準備什麼呢？",
+            "有提供單一空間局部裝修？",
+            "請問有單純提供系統櫃規劃嗎？",
+            "請問有服務 30 年以上的老屋翻新嗎？",
+          ].includes(text);
+          const isGenericText = !service && !event.postback && text.length > 0 && !isExistingMetaFaq;
+          if (!service && !isGenericText) continue;
+          if (await claimInviteOnce(senderId, service ? "service" : "generic")) {
             try { await sendWebformInvite(senderId, publicBaseUrlFromEnv(), service); }
-            catch { invites.remove(senderId); logEvent("webform_invite_fail"); }
+            catch { await releaseInviteReservation(senderId); logEvent("webform_invite_fail"); }
           }
         }
         continue;
@@ -278,13 +286,14 @@ async function sendWebformInvite(senderId, baseUrl, service = null, sender = met
   const formUrl = `${base}/form?t=${encodeURIComponent(token)}`;
 
   const intro = service
-    ? `您選擇了「${service}」，已幫您帶入表單第一題。請花約一分鐘填寫其餘需求，填完後摘要會回到這個對話。`
-    : "可以利用一分鐘快速填表，讓我們迅速掌握您的需求。\n\n請點下方按鈕開啟表單，填完後摘要會回到這個對話。";
+    ? `您好，謝謝您洽詢「${service}」！為了更了解您的需求，麻煩您花約一分鐘填寫表單，完成後摘要會回到這個對話。`
+    : "您好，謝謝您的訊息！為了更了解您的需求，麻煩您花約一分鐘填寫表單，完成後摘要會回到這個對話。";
 
   try {
     await sender.sendUrlButton(senderId, intro, {
       title: "開始填表",
       url: formUrl,
+      messengerExtensions: MESSENGER_WEBVIEW_ENABLED,
     });
     logEvent("webform_invite_sent");
   } catch (error) {
@@ -295,6 +304,26 @@ async function sendWebformInvite(senderId, baseUrl, service = null, sender = met
       `${intro}\n\n表單連結：\n${formUrl}`
     );
   }
+}
+
+async function claimInviteOnce(senderId, kind) {
+  // Local development without database credentials still supports one invite
+  // per process; production uses a durable unique-key database reservation.
+  if (!isSupabaseConfigured()) return invites.claim(senderId, Number.MAX_SAFE_INTEGER);
+  try { return await claimAutomaticInvite({ senderId, kind }); }
+  catch {
+    logEvent("webform_invite_claim_fail");
+    return false;
+  }
+}
+
+async function releaseInviteReservation(senderId) {
+  if (!isSupabaseConfigured()) {
+    invites.remove(senderId);
+    return;
+  }
+  try { await releaseAutomaticInvite({ senderId }); }
+  catch { logEvent("webform_invite_release_fail"); }
 }
 
 function optionMatch(step, payload, text) {
@@ -493,8 +522,15 @@ app.post("/test/message", async (req, res) => {
   try {
     if (DEMO_MODE === "webform") {
       const service = serviceForTrigger({ text: text || "", payload: payload || "" });
-      if (text === "新增需求" || service) {
-        if (text === "新增需求" || invites.claim(senderId, cooldown())) {
+      const isExistingMetaFaq = [
+        "初步洽談諮詢需要準備什麼呢？",
+        "有提供單一空間局部裝修？",
+        "請問有單純提供系統櫃規劃嗎？",
+        "請問有服務 30 年以上的老屋翻新嗎？",
+      ].includes(text || "");
+      const generic = !service && !payload && Boolean(text) && text !== "新增需求" && !isExistingMetaFaq;
+      if (text === "新增需求" || service || generic) {
+        if (text === "新增需求" || await claimInviteOnce(senderId, service ? "service" : "generic")) {
           const localSender = {
             sendUrlButton: async (_id, t, spec) => outbox.push({ type: "url_button", text: t, ...spec }),
             sendText: async (_id, t) => outbox.push({ type: "text", text: t }),

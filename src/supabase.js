@@ -54,6 +54,24 @@ export async function createCustomerLead({ senderId, answers }) {
   return data;
 }
 
+/** Atomically reserve the single automatic invitation allowed per Messenger ID. */
+export async function claimAutomaticInvite({ senderId, kind }) {
+  const { error } = await getClient().from("bot_invite_registry").insert({
+    messenger_user_id: senderId,
+    invite_kind: kind,
+  });
+  if (error?.code === "23505") return false;
+  if (error) throw error;
+  return true;
+}
+
+/** Release the reservation if delivery fails so a later message can retry. */
+export async function releaseAutomaticInvite({ senderId }) {
+  const { error } = await getClient().from("bot_invite_registry")
+    .delete().eq("messenger_user_id", senderId);
+  if (error) throw error;
+}
+
 export async function readCustomerLead({ senderId, id }) {
   let query = getClient().from("customer_leads").select("id,answers")
     .eq("messenger_user_id", senderId);

@@ -160,7 +160,32 @@ export function renderFormPage({ token, error = "", prefill = {}, editing = fals
 </html>`;
 }
 
-export function renderDonePage({ summary, messengerOk, heading, editUrl, newFormUrl }) {
+export function renderDonePage({ summary, messengerOk, heading, editUrl, newFormUrl, autoReturnToMessenger = false }) {
+  const shouldAutoReturn = autoReturnToMessenger && messengerOk;
+  const returnNotice = messengerOk
+    ? shouldAutoReturn
+      ? "已完成，Messenger 對話已收到摘要；即將返回對話。若沒有自動返回，請手動切回 Messenger。"
+      : "已完成，請回到 Messenger 對話查看摘要與官方 LINE 邀請。"
+    : "請回到 Messenger 對話查看處理結果；若沒有自動返回，請手動切回 Messenger。";
+  const autoReturnScript = shouldAutoReturn ? `<script>
+    window.extAsyncInit = function () {
+      setTimeout(function () {
+        var extensions = window.MessengerExtensions;
+        if (extensions && typeof extensions.requestCloseBrowser === "function") {
+          extensions.requestCloseBrowser(function () {}, function () {});
+        }
+      }, 1200);
+    };
+    (function (d, s, id) {
+      if (d.getElementById(id)) return;
+      var js = d.createElement(s);
+      js.id = id;
+      js.src = "https://connect.facebook.net/en_US/messenger.Extensions.js";
+      js.async = true;
+      js.onerror = function () {};
+      d.head.appendChild(js);
+    }(document, "script", "MessengerExtensionsSDK"));
+  </script>` : "";
   return `<!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -183,9 +208,10 @@ export function renderDonePage({ summary, messengerOk, heading, editUrl, newForm
       <pre>${escapeHtml(summary)}</pre>
       ${editUrl ? `<p><a href="${escapeHtml(editUrl)}">修改需求</a></p><p class="note">修改連結兩小時內有效，請勿轉傳。過期後請在 Messenger 傳「修改需求」。</p>` : ""}
       ${newFormUrl ? `<p><a id="new-form-link" href="${escapeHtml(newFormUrl)}" style="display:inline-block;padding:12px 16px;background:#1877f2;color:#fff;border-radius:12px;text-decoration:none">重新填寫（新增一筆）</a></p><p class="note">會開啟空白表單，填完送出才新增一筆需求，不會覆蓋原資料。</p>` : ""}
-      <p class="note">請回到粉專 Messenger 對話查看。可關閉此分頁。</p>
+      <p class="note" id="messenger-return-notice">${returnNotice}</p>
     </div>
   </div>
+  ${autoReturnScript}
 </body>
 </html>`;
 }

@@ -20,6 +20,7 @@ const logs = [];
 console.log = (...args) => logs.push(args.join(" "));
 let sends = 0, inserts = 0, updates = 0, failDb = false, failMeta = false;
 const rows = new Map();
+const automaticInvites = new Set();
 const messages = [];
 globalThis.fetch = async (url, options) => {
   const value = String(url);
@@ -32,6 +33,19 @@ globalThis.fetch = async (url, options) => {
   }
   if (value.startsWith("https://example.supabase.co/rest/")) {
     if (failDb) return new Response(JSON.stringify({ message: "private database error" }), { status: 400 });
+    if (value.includes("/bot_invite_registry")) {
+      const params = new URL(value).searchParams;
+      if (options.method === "POST") {
+        const { messenger_user_id: sender } = JSON.parse(options.body);
+        if (automaticInvites.has(sender)) return Response.json({ code: "23505", message: "duplicate key" }, { status: 409 });
+        automaticInvites.add(sender);
+        return new Response(null, { status: 201 });
+      }
+      assert.equal(options.method, "DELETE");
+      const sender = params.get("messenger_user_id")?.slice(3);
+      automaticInvites.delete(sender);
+      return new Response(null, { status: 204 });
+    }
     const params = new URL(value).searchParams;
     if (options.method === "POST") {
       inserts++;
@@ -64,6 +78,8 @@ const { signFormToken, verifyFormToken } = await import("../src/form-token.js");
 const { FORM_FIELDS, validateAnswers, buildFormSummary } = await import("../src/form-schema.js");
 const { FLOW } = await import("../src/flow.js");
 const { SERVICE_TRIGGERS } = await import("../src/service-triggers.js");
+const { renderDonePage } = await import("../src/form-page.js");
+const metaClient = await import("../src/meta.js");
 let server;
 before(async () => {
   server = app.listen(3000, "127.0.0.1");
@@ -122,6 +138,30 @@ test("form renders shared questions and escapes customer-supplied values", async
   }
   assert.throws(() => signFormToken("prefill-test", 7200, null, "未核准服務"));
 });
+test("completion page asks users to return to Messenger and gates auto-return on success", () => {
+  const manual = renderDonePage({ summary: "送出摘要", messengerOk: true, heading: "需求已送出" });
+  assert.match(manual, /請回到 Messenger 對話查看摘要與官方 LINE 邀請/);
+  assert.doesNotMatch(manual, /MessengerExtensionsSDK|requestCloseBrowser/);
+
+  const automatic = renderDonePage({ summary: "送出摘要", messengerOk: true, heading: "需求已送出", autoReturnToMessenger: true });
+  assert.match(automatic, /即將返回對話/);
+  assert.match(automatic, /requestCloseBrowser/);
+  assert.match(automatic, /messenger\.Extensions\.js/);
+
+  const failedMessage = renderDonePage({ summary: "送出摘要", messengerOk: false, autoReturnToMessenger: true });
+  assert.doesNotMatch(failedMessage, /MessengerExtensionsSDK|requestCloseBrowser/);
+});
+test("Messenger webview button flag is opt-in", async () => {
+  const before = messages.length;
+  await metaClient.sendUrlButton("webview-enabled", "開始表單", {
+    title: "開始填表", url: "https://bot.sameheart-design.com/form", messengerExtensions: true,
+  });
+  await metaClient.sendUrlButton("webview-disabled", "開始表單", {
+    title: "開始填表", url: "https://bot.sameheart-design.com/form",
+  });
+  assert.equal(messages[before].message.attachment.payload.buttons[0].messenger_extensions, true);
+  assert.equal("messenger_extensions" in messages[before + 1].message.attachment.payload.buttons[0], false);
+});
 test("tokens reject tampering / expiry; independent invites have unique tokens", () => {
   const token = signFormToken("test");
   assert.equal(verifyFormToken(token).psid, "test");
@@ -172,7 +212,9 @@ test("concurrent duplicate submission produces exactly one insert and message", 
   assert.doesNotMatch(await nextForm.text(), /value="測試姓名"/);
   const nextResult = await submit(nextToken);
   assert.equal(nextResult.status, 200);
-  assert.match(await nextResult.text(), /重新填寫（新增一筆）/);
+  const doneHtml = await nextResult.text();
+  assert.match(doneHtml, /重新填寫（新增一筆）/);
+  assert.match(doneHtml, /請回到 Messenger 對話查看摘要與官方 LINE 邀請/);
   assert.equal((await submit(nextToken)).status, 409);
   assert.deepEqual([sends - previous[0], inserts - previous[1]], [6, 2]);
 });
@@ -198,17 +240,21 @@ test("Messenger failure still saves the submitted lead", async () => {
     assert.equal(inserts - previous, 1);
   } finally { failMeta = false; }
 });
-test("ordinary questions and the current Meta FAQ do not trigger Bot invitations", async () => {
+test("ordinary first text gets one generic invitation; current Meta FAQ remains excluded", async () => {
   const previous = sends;
   const ordinary = ["我想問一下", "初步洽談諮詢需要準備什麼呢？", "請問有服務 30 年以上的老屋翻新嗎？"];
   const body = JSON.stringify({ object: "page", entry: [{ messaging: ordinary.map((text, index) => ({ sender: { id: `ordinary-${index}` }, message: { text } })) }] });
   await webhook(body);
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(sends - previous, 0);
+  assert.equal(sends - previous, 1);
+  const genericInvite = messages.find(message => message.recipient.id === "ordinary-0");
+  assert.match(genericInvite.message.attachment.payload.text, /您好，謝謝您的訊息/);
+  const genericToken = new URL(genericInvite.message.attachment.payload.buttons[0].url).searchParams.get("t");
+  assert.equal(verifyFormToken(genericToken).service, null);
   const submitted = JSON.stringify({ object: "page", entry: [{ messaging: [{ sender: { id: "duplicate-test" }, message: { text: "thanks" } }] }] });
   await webhook(submitted);
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(sends - previous, 0);
+  assert.equal(sends - previous, 2);
 });
 test("four explicit service entries invite once and preselect the matching first form answer", async () => {
   const previous = messages.length;
@@ -226,6 +272,7 @@ test("four explicit service entries invite once and preselect the matching first
   for (const [index, trigger] of SERVICE_TRIGGERS.entries()) {
     const invitation = invitations.find(message => message.recipient.id === `service-trigger-${index}`);
     assert.match(invitation.message.attachment.payload.text, new RegExp(trigger.service));
+    assert.equal("messenger_extensions" in invitation.message.attachment.payload.buttons[0], false);
     const token = new URL(invitation.message.attachment.payload.buttons[0].url).searchParams.get("t");
     assert.equal(verifyFormToken(token).service, trigger.service);
     const form = await (await request("/form?t=" + encodeURIComponent(token))).text();
@@ -240,6 +287,26 @@ test("four explicit service entries invite once and preselect the matching first
   ] }] }));
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(messages.length, beforeDuplicate);
+});
+test("automatic invitation is shared across generic and service entry; explicit 新增需求 remains available", async () => {
+  const previous = messages.length;
+  const userId = "once-only-user";
+  await webhook(JSON.stringify({ object: "page", entry: [{ messaging: [
+    { sender: { id: userId }, message: { text: "您好，我想了解裝修服務" } },
+    { sender: { id: userId }, message: { text: SERVICE_TRIGGERS[0].title } },
+  ] }] }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(messages.length - previous, 1);
+  const automatic = messages[previous];
+  const token = new URL(automatic.message.attachment.payload.buttons[0].url).searchParams.get("t");
+  assert.equal(verifyFormToken(token).service, null);
+
+  const beforeManual = messages.length;
+  await webhook(JSON.stringify({ object: "page", entry: [{ messaging: [
+    { sender: { id: userId }, message: { text: "新增需求" } },
+  ] }] }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(messages.length - beforeManual, 1, "explicit command bypasses the automatic-once marker");
 });
 test("without database credentials, chat still reaches confirmation and completion", async () => {
   const key = process.env.SUPABASE_SECRET_KEY;

@@ -15,6 +15,8 @@ docker compose -f compose.bot.yaml up -d --build
 
 正式部署前確認 `.env` 已存在且權限限制為服務使用者可讀；Compose 會載入其中既有的 Meta 與 Supabase 設定。`PUBLIC_BASE_URL` 會由 Compose 固定為正式 HTTPS 網址。不可將 `.env` 放入映像檔或 Git。
 
+Messenger 表單 Webview 與送出後自動返回對話預設關閉。先在 Meta Messenger 設定中允許 `bot.sameheart-design.com` 網域，再於 VPS `.env` 設定 `MESSENGER_WEBVIEW_ENABLED=true`，並只重啟 `sanhe-bot` 才啟用。若表單是在外部瀏覽器開啟，自動返回功能不一定可用；完成頁會提示使用者手動回到 Messenger。
+
 Compose 會把原專案的 `config/` 以唯讀方式掛入，讓 `.env` 既有的 `QUESTIONS_PATH` 繼續讀取原題庫；不要替換或修改題庫檔案。
 
 ## 自動更新

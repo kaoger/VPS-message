@@ -83,7 +83,7 @@ export async function sendButtonTemplate(
  * Button Template with a single web_url (open external form).
  * title max 20 chars.
  */
-export async function sendUrlButton(recipientId, text, { title, url }) {
+export async function sendUrlButton(recipientId, text, { title, url, messengerExtensions = false }) {
   await sendMessage(recipientId, {
     attachment: {
       type: "template",
@@ -96,6 +96,7 @@ export async function sendUrlButton(recipientId, text, { title, url }) {
             title: String(title).slice(0, 20),
             url,
             webview_height_ratio: "tall",
+            ...(messengerExtensions ? { messenger_extensions: true } : {}),
           },
         ],
       },
