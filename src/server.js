@@ -34,6 +34,10 @@ import {
 } from "./form-schema.js";
 import { renderFormPage, renderDonePage } from "./form-page.js";
 import { serviceForTrigger } from "./service-triggers.js";
+import { renderPrivacyPage, renderDataDeletionPage } from "./legal-pages.js";
+
+const DATA_DELETION_COMMAND = "刪除我的資料";
+const DATA_DELETION_REPLY = "已收到您的資料刪除申請。我們會在核對後 30 天內刪除您透過 Messenger 與需求表單提供的資料，完成後會再通知您。";
 
 validateEnvironment();
 export const app = express();
@@ -83,6 +87,14 @@ app.get("/health", (_req, res) => {
     flowSteps: FLOW.length,
     supabaseConfigured: isSupabaseConfigured(),
   });
+});
+
+app.get("/privacy", (_req, res) => {
+  res.set("Cache-Control", "public, max-age=3600").type("html").send(renderPrivacyPage());
+});
+
+app.get("/data-deletion", (_req, res) => {
+  res.set("Cache-Control", "public, max-age=3600").type("html").send(renderDataDeletionPage());
 });
 
 app.get("/webhook", (req, res) => {
@@ -213,6 +225,13 @@ async function processWebhook(body) {
     for (const event of entry.messaging ?? []) {
       const senderId = event?.sender?.id;
       if (!senderId) continue;
+
+      // Data deletion requests (see /data-deletion) are acknowledged and handled by staff, never invited.
+      if (!event.message?.is_echo && (event.message?.text || "").trim() === DATA_DELETION_COMMAND) {
+        try { await meta.sendText(senderId, DATA_DELETION_REPLY); } catch { logEvent("data_deletion_reply_fail"); }
+        logEvent("data_deletion_request");
+        continue;
+      }
 
       if (DEMO_MODE === "webform") {
         // Keep the four service entries; ordinary text gets a generic invite.

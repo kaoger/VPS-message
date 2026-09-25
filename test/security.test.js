@@ -258,6 +258,28 @@ test("ordinary first text gets one generic invitation; current Meta FAQ remains 
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(sends - previous, 2);
 });
+test("public privacy and data deletion pages are served for Meta App Review", async () => {
+  for (const [path, heading, detail] of [["/privacy", "隱私權政策", /href="\/data-deletion"/], ["/data-deletion", "資料刪除說明", /刪除我的資料/]]) {
+    const response = await request(path);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type"), /text\/html/);
+    const html = await response.text();
+    assert.match(html, new RegExp(`<h1>${heading}</h1>`));
+    assert.match(html, /三禾室內設計裝潢工程/);
+    assert.match(html, detail);
+  }
+});
+test("data deletion request is acknowledged without a form invitation", async () => {
+  const previous = messages.length;
+  const body = JSON.stringify({ object: "page", entry: [{ messaging: [{ sender: { id: "deletion-request" }, message: { text: "刪除我的資料" } }] }] });
+  await webhook(body);
+  await new Promise(resolve => setImmediate(resolve));
+  const replies = messages.slice(previous).filter(message => message.recipient.id === "deletion-request");
+  assert.equal(replies.length, 1);
+  assert.match(replies[0].message.text, /已收到您的資料刪除申請/);
+  assert.equal(automaticInvites.has("deletion-request"), false);
+  assert.ok(!logs.some(line => line.includes("deletion-request")), "Logs must not contain the Messenger id");
+});
 test("four explicit service entries invite once and preselect the matching first form answer", async () => {
   const previous = messages.length;
   const events = SERVICE_TRIGGERS.map((trigger, index) => ({
