@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { isSupportedService } from "./service-triggers.js";
 
 function secret() {
   const value = process.env.FORM_TOKEN_SECRET;
@@ -25,9 +26,11 @@ function fromB64url(str) {
 }
 
 /** Create short-lived token binding Messenger PSID */
-export function signFormToken(psid, ttlSec = 2 * 60 * 60, edit = null) {
+export function signFormToken(psid, ttlSec = 2 * 60 * 60, edit = null, service = null) {
   const exp = Math.floor(Date.now() / 1000) + ttlSec;
-  const payload = `${psid}.${exp}.${crypto.randomBytes(16).toString("hex")}${edit ? "." + b64url(JSON.stringify(edit)) : ""}`;
+  if (service && !isSupportedService(service)) throw new Error("invalid service prefill");
+  const extra = edit && service ? { edit, service } : service ? { service } : edit;
+  const payload = `${psid}.${exp}.${crypto.randomBytes(16).toString("hex")}${extra ? "." + b64url(JSON.stringify(extra)) : ""}`;
   const sig = crypto
     .createHmac("sha256", secret())
     .update(payload)
@@ -56,14 +59,25 @@ export function verifyFormToken(token) {
   ) {
     throw new Error("bad signature");
   }
-  const [psid, expStr, , editData] = payload.split(".");
+  const [psid, expStr, , extraData] = payload.split(".");
   const exp = Number(expStr);
   if (!psid || !exp || Date.now() / 1000 > exp) {
     throw new Error("token expired");
   }
-  const edit = editData ? JSON.parse(fromB64url(editData)) : null;
+  let edit = null;
+  let service = null;
+  if (extraData) {
+    const extra = JSON.parse(fromB64url(extraData));
+    // Continue accepting existing signed edit tokens that stored the edit claim directly.
+    if (extra?.id) edit = extra;
+    else {
+      edit = extra?.edit || null;
+      service = extra?.service || null;
+    }
+  }
   if (edit && (!edit.id || !["db", "memory"].includes(edit.storage) || !/^[a-f0-9]{64}$/.test(edit.version))) throw new Error("invalid edit token");
-  return { psid, exp, edit };
+  if (service && !isSupportedService(service)) throw new Error("invalid service prefill");
+  return { psid, exp, edit, service };
 }
 
 export function publicBaseUrl(req) {

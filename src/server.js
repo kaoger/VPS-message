@@ -31,6 +31,7 @@ import {
   FORM_FIELDS,
 } from "./form-schema.js";
 import { renderFormPage, renderDonePage } from "./form-page.js";
+import { serviceForTrigger } from "./service-triggers.js";
 
 validateEnvironment();
 export const app = express();
@@ -136,6 +137,8 @@ app.get("/form", async (req, res) => {
         prefill.area = "其他地區";
       }
     } catch { logEvent("form_load_fail"); return formError(res, 503, "目前無法讀取需求，請稍後重試。"); }
+  } else if (claims.service) {
+    prefill.service = claims.service;
   }
   res.type("html").send(renderFormPage({ token, prefill, editing: Boolean(claims.edit) }));
 });
@@ -212,7 +215,7 @@ async function processWebhook(body) {
       if (!senderId) continue;
 
       if (DEMO_MODE === "webform") {
-        // Ignore echoes; any user message or postback → send form CTA
+        // Ignore echoes and only invite on explicit service-entry events.
         if (event.message?.is_echo) continue;
         const command = (event.message?.text || event.postback?.payload || "").trim();
         if (command === "修改需求") {
@@ -228,8 +231,13 @@ async function processWebhook(body) {
           continue;
         }
         if (event.message || event.postback) {
+          const service = serviceForTrigger({
+            text: event.message?.text || "",
+            payload: event.message?.quick_reply?.payload || event.postback?.payload || "",
+          });
+          if (!service) continue;
           if (invites.claim(senderId, cooldown())) {
-            try { await sendWebformInvite(senderId, publicBaseUrlFromEnv()); }
+            try { await sendWebformInvite(senderId, publicBaseUrlFromEnv(), service); }
             catch { invites.remove(senderId); logEvent("webform_invite_fail"); }
           }
         }
@@ -264,16 +272,17 @@ function publicBaseUrlFromEnv() {
   return (process.env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
 }
 
-async function sendWebformInvite(senderId, baseUrl) {
+async function sendWebformInvite(senderId, baseUrl, service = null, sender = meta) {
   const base = baseUrl || "http://127.0.0.1:3000";
-  const token = signFormToken(senderId);
+  const token = signFormToken(senderId, 2 * 60 * 60, null, service);
   const formUrl = `${base}/form?t=${encodeURIComponent(token)}`;
 
-  const intro =
-    "可以利用一分鐘快速填表，讓我們迅速掌握您的需求。\n\n請點下方按鈕開啟表單，填完後摘要會回到這個對話。";
+  const intro = service
+    ? `您選擇了「${service}」，已幫您帶入表單第一題。請花約一分鐘填寫其餘需求，填完後摘要會回到這個對話。`
+    : "可以利用一分鐘快速填表，讓我們迅速掌握您的需求。\n\n請點下方按鈕開啟表單，填完後摘要會回到這個對話。";
 
   try {
-    await meta.sendUrlButton(senderId, intro, {
+    await sender.sendUrlButton(senderId, intro, {
       title: "開始填表",
       url: formUrl,
     });
@@ -281,7 +290,7 @@ async function sendWebformInvite(senderId, baseUrl) {
   } catch (error) {
     logEvent("webform_invite_fail");
     // Fallback: plain text with raw link
-    await meta.sendText(
+    await sender.sendText(
       senderId,
       `${intro}\n\n表單連結：\n${formUrl}`
     );
@@ -448,6 +457,7 @@ if (process.env.NODE_ENV !== "production") {
 app.post("/test/reset", (req, res) => {
   const senderId = String(req.body?.senderId || "test-user");
   deleteSession(senderId);
+  invites.remove(senderId);
   res.json({ ok: true, senderId });
 });
 
@@ -482,14 +492,16 @@ app.post("/test/message", async (req, res) => {
 
   try {
     if (DEMO_MODE === "webform") {
-      const base =
-        process.env.PUBLIC_BASE_URL ||
-        "http://127.0.0.1:3000";
-      const token = signFormToken(senderId);
-      await send.urlButton(senderId, "可以利用一分鐘快速填表…", {
-        title: "開始填表",
-        url: `${base}/form?t=${encodeURIComponent(token)}`,
-      });
+      const service = serviceForTrigger({ text: text || "", payload: payload || "" });
+      if (text === "新增需求" || service) {
+        if (text === "新增需求" || invites.claim(senderId, cooldown())) {
+          const localSender = {
+            sendUrlButton: async (_id, t, spec) => outbox.push({ type: "url_button", text: t, ...spec }),
+            sendText: async (_id, t) => outbox.push({ type: "text", text: t }),
+          };
+          await sendWebformInvite(senderId, process.env.PUBLIC_BASE_URL || "http://127.0.0.1:3000", service, localSender);
+        }
+      }
     } else {
       await handleIncoming(senderId, { text, payload }, send);
     }

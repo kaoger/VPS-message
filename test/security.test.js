@@ -63,6 +63,7 @@ const { app, handleIncoming } = await import("../src/server.js");
 const { signFormToken, verifyFormToken } = await import("../src/form-token.js");
 const { FORM_FIELDS, validateAnswers, buildFormSummary } = await import("../src/form-schema.js");
 const { FLOW } = await import("../src/flow.js");
+const { SERVICE_TRIGGERS } = await import("../src/service-triggers.js");
 let server;
 before(async () => {
   server = app.listen(3000, "127.0.0.1");
@@ -103,6 +104,7 @@ test("form renders shared questions and escapes customer-supplied values", async
   assert.equal(response.headers.get("referrer-policy"), "no-referrer");
   const html = await response.text();
   assert.match(html, /三禾需求快填/);
+  assert.equal((html.match(/<section class="card" data-step>/g) || []).length, 8);
   assert.doesNotMatch(html, /Demo|三合/);
   for (const field of ORIGINAL_FORM_FIELDS) {
     assert.ok(html.includes(field.label));
@@ -111,6 +113,14 @@ test("form renders shared questions and escapes customer-supplied values", async
   }
   const invalid = await submit(signFormToken("escape"), { ...answers, name: '<script>alert(1)</script>', phone: "bad" });
   assert.doesNotMatch(await invalid.text(), /<script>alert\(1\)<\/script>/);
+  for (const { service } of SERVICE_TRIGGERS) {
+    const serviceToken = signFormToken("prefill-test", 7200, null, service);
+    assert.equal(verifyFormToken(serviceToken).service, service);
+    const serviceForm = await (await request("/form?t=" + encodeURIComponent(serviceToken))).text();
+    assert.match(serviceForm, new RegExp(`class="chip selected" data-field="service" data-value="${service}"`));
+    assert.equal((serviceForm.match(/<section class="card" data-step>/g) || []).length, 8);
+  }
+  assert.throws(() => signFormToken("prefill-test", 7200, null, "未核准服務"));
 });
 test("tokens reject tampering / expiry; independent invites have unique tokens", () => {
   const token = signFormToken("test");
@@ -188,17 +198,48 @@ test("Messenger failure still saves the submitted lead", async () => {
     assert.equal(inserts - previous, 1);
   } finally { failMeta = false; }
 });
-test("three incoming messages only invite once; submitted users are suppressed", async () => {
+test("ordinary questions and the current Meta FAQ do not trigger Bot invitations", async () => {
   const previous = sends;
-  const body = JSON.stringify({ object: "page", entry: [{ messaging: [1, 2, 3].map(() => ({ sender: { id: "invite-test" }, message: { text: "private text" } })) }] });
+  const ordinary = ["我想問一下", "初步洽談諮詢需要準備什麼呢？", "請問有服務 30 年以上的老屋翻新嗎？"];
+  const body = JSON.stringify({ object: "page", entry: [{ messaging: ordinary.map((text, index) => ({ sender: { id: `ordinary-${index}` }, message: { text } })) }] });
   await webhook(body);
-  // Let the asynchronous webhook processing drain.
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(sends - previous, 1);
+  assert.equal(sends - previous, 0);
   const submitted = JSON.stringify({ object: "page", entry: [{ messaging: [{ sender: { id: "duplicate-test" }, message: { text: "thanks" } }] }] });
   await webhook(submitted);
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(sends - previous, 1);
+  assert.equal(sends - previous, 0);
+});
+test("four explicit service entries invite once and preselect the matching first form answer", async () => {
+  const previous = messages.length;
+  const events = SERVICE_TRIGGERS.map((trigger, index) => ({
+    sender: { id: `service-trigger-${index}` },
+    ...(index === SERVICE_TRIGGERS.length - 1
+      ? { postback: { payload: trigger.payload } }
+      : { message: { text: trigger.title } }),
+  }));
+  await webhook(JSON.stringify({ object: "page", entry: [{ messaging: events }] }));
+  await new Promise(resolve => setImmediate(resolve));
+  const invitations = messages.slice(previous).filter(message => message.message.attachment?.payload.buttons[0].title === "開始填表");
+  assert.equal(invitations.length, 4);
+
+  for (const [index, trigger] of SERVICE_TRIGGERS.entries()) {
+    const invitation = invitations.find(message => message.recipient.id === `service-trigger-${index}`);
+    assert.match(invitation.message.attachment.payload.text, new RegExp(trigger.service));
+    const token = new URL(invitation.message.attachment.payload.buttons[0].url).searchParams.get("t");
+    assert.equal(verifyFormToken(token).service, trigger.service);
+    const form = await (await request("/form?t=" + encodeURIComponent(token))).text();
+    assert.match(form, new RegExp(`class="chip selected" data-field="service" data-value="${trigger.service}"`));
+    assert.equal((form.match(/<section class="card" data-step>/g) || []).length, 8);
+  }
+
+  const beforeDuplicate = messages.length;
+  await webhook(JSON.stringify({ object: "page", entry: [{ messaging: [
+    { sender: { id: "service-trigger-0" }, message: { text: SERVICE_TRIGGERS[0].title } },
+    { sender: { id: "service-trigger-0" }, message: { text: SERVICE_TRIGGERS[0].title } },
+  ] }] }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(messages.length, beforeDuplicate);
 });
 test("without database credentials, chat still reaches confirmation and completion", async () => {
   const key = process.env.SUPABASE_SECRET_KEY;
