@@ -1,6 +1,5 @@
 // Public policy pages required by Meta App Review (privacy policy + data deletion instructions).
 export const BUSINESS_NAME = "三禾室內設計裝潢工程";
-export const PRIVACY_CONTACT_EMAIL = "a25397518@gmail.com";
 export const POLICY_EFFECTIVE_DATE = "2026 年 9 月 26 日";
 
 function layout(title, body) {
@@ -74,7 +73,7 @@ export function renderPrivacyPage() {
       <p>依中華民國《個人資料保護法》，您可以查詢、閱覽、補充或更正、停止蒐集處理利用，或要求刪除您的個人資料。刪除方式請見<a href="/data-deletion">資料刪除說明</a>。</p>
 
       <h2>六、聯絡我們</h2>
-      <p>如對本政策有任何疑問，請透過粉絲專頁 Messenger 與我們聯繫，或寄信至 <a href="mailto:${PRIVACY_CONTACT_EMAIL}">${PRIVACY_CONTACT_EMAIL}</a>。</p>
+      <p>如對本政策有任何疑問，請透過 Facebook 粉絲專頁「${BUSINESS_NAME}」的 Messenger 與我們聯繫。</p>
 
       <h2>七、政策更新</h2>
       <p>本政策如有修改，將公告於本頁並更新生效日期。</p>`);
@@ -87,10 +86,7 @@ export function renderDataDeletionPage() {
       <p>您可以隨時要求我們刪除透過 Messenger 及線上需求表單提供的個人資料。</p>
 
       <h2>如何申請</h2>
-      <ol>
-        <li>在 Facebook 粉絲專頁「${BUSINESS_NAME}」的 Messenger 對話中傳送「<strong>刪除我的資料</strong>」；或</li>
-        <li>寄信至 <a href="mailto:${PRIVACY_CONTACT_EMAIL}">${PRIVACY_CONTACT_EMAIL}</a>，主旨註明「刪除個人資料」，並提供您填寫表單時使用的姓名與聯絡電話，以便我們核對。</li>
-      </ol>
+      <p>在 Facebook 粉絲專頁「${BUSINESS_NAME}」的 Messenger 對話中傳送「<strong>刪除我的資料</strong>」。若您使用其他 Facebook 帳號申請，請一併提供填寫表單時使用的姓名與聯絡電話，以便我們核對。</p>
 
       <h2>處理方式</h2>
       <ul>

@@ -267,6 +267,7 @@ test("public privacy and data deletion pages are served for Meta App Review", as
     assert.match(html, new RegExp(`<h1>${heading}</h1>`));
     assert.match(html, /三禾室內設計裝潢工程/);
     assert.match(html, detail);
+    assert.doesNotMatch(html, /mailto:|@gmail\.|@yahoo\./, "Public pages must not expose the developer contact email");
   }
 });
 test("data deletion request is acknowledged without a form invitation", async () => {
