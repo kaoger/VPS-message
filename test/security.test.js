@@ -121,6 +121,8 @@ test("form renders shared questions and escapes customer-supplied values", async
   const html = await response.text();
   assert.match(html, /三禾需求快填/);
   assert.equal((html.match(/<section class="card" data-step>/g) || []).length, 8);
+  assert.match(html, /name="name" type="text" inputmode="text"\s+autocomplete="name"/);
+  assert.match(html, /name="phone" type="tel" inputmode="numeric"\s+autocomplete="tel"/);
   assert.doesNotMatch(html, /Demo|三合/);
   for (const field of ORIGINAL_FORM_FIELDS) {
     assert.ok(html.includes(field.label));

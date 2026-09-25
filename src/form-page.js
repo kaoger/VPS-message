@@ -25,12 +25,12 @@ export function renderFormPage({ token, error = "", prefill = {}, editing = fals
       </section>`;
     }
     const inputType = f.type === "tel" ? "tel" : "text";
+    const autocomplete = f.key === "name" ? "name" : f.key === "phone" ? "tel" : null;
     return `<section class="card" data-step>
       <h2>${escapeHtml(f.label)}</h2>
       <input name="${f.key}" type="${inputType}" inputmode="${f.type === "tel" ? "numeric" : "text"}"
-        placeholder="${escapeHtml(f.placeholder || "")}"
-        value="${escapeHtml(prefill[f.key] || "")}"
-        ${f.pattern ? `pattern="${f.pattern}"` : ""} required />
+        ${autocomplete ? `autocomplete="${autocomplete}"` : ""}
+        placeholder="${escapeHtml(f.placeholder || "")}" value="${escapeHtml(prefill[f.key] || "")}" ${f.pattern ? `pattern="${f.pattern}"` : ""} required />
     </section>`;
   }).join("\n");
 
