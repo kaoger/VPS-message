@@ -18,6 +18,11 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+    volumes:
+      - type: bind
+        source: ./config
+        target: /opt/data/projects/sanhe-messenger-bot/config
+        read_only: true
     cap_drop:
       - ALL
     security_opt:

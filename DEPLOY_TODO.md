@@ -123,7 +123,7 @@
 - 預期流程：GitHub push → Actions 執行 `npm test` → 透過受限 SSH 呼叫 VPS 的 Bot 專用部署命令 → 重建並重啟 `sanhe-bot` → 健康檢查。
 - 不把 Docker socket 掛進 Hermes，也不授予 Hermes 一般 root／Docker 管理權。
 - VPS 已建立 `sanhe-deploy` 限權帳號，只能經強制 SSH 命令執行 root 擁有的 Bot 部署腳本；sudo 也只允許該固定腳本。私鑰不進 Git。
-- GitHub Actions workflow 已在本機準備；尚待使用者在 GitHub repository secret `SANHE_DEPLOY_KEY` 安全貼入私鑰後，才能推送 workflow 並開始自動部署。
+- GitHub repository secret `SANHE_DEPLOY_KEY` 已設定；首次自動部署進行中，詳見最新 GitHub Actions 結果。
 
 ---
 
