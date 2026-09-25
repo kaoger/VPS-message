@@ -1,6 +1,6 @@
 // Public policy pages required by Meta App Review (privacy policy + data deletion instructions).
 export const BUSINESS_NAME = "三禾室內設計裝潢工程";
-export const PRIVACY_CONTACT_EMAIL = "a25397518@yahoo.com.tw";
+export const PRIVACY_CONTACT_EMAIL = "a25397518@gmail.com";
 export const POLICY_EFFECTIVE_DATE = "2026 年 9 月 26 日";
 
 function layout(title, body) {
