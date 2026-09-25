@@ -1,0 +1,48 @@
+services:
+  sanhe-bot:
+    build: .
+    image: sanhe-messenger-bot:latest
+    restart: unless-stopped
+    init: true
+    user: "10000:10000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      PUBLIC_BASE_URL: https://bot.sameheart-design.com
+      LOG_PATH: ""
+    expose:
+      - "3000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.sanhe-bot.rule: Host(`bot.sameheart-design.com`)
+      traefik.http.routers.sanhe-bot.entrypoints: websecure
+      traefik.http.routers.sanhe-bot.tls: "true"
+      traefik.http.routers.sanhe-bot.tls.certresolver: letsencrypt
+      traefik.http.services.sanhe-bot.loadbalancer.server.port: "3000"
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
+    name: hermes-agent-llsk_default

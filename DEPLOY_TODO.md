@@ -106,53 +106,24 @@
 
 ---
 
-## B. Hostinger VPS 部署
+## B. Hostinger VPS 部署（獨立 Bot 容器）
 
-### B1 [P0] 環境準備
-- 用 SSH 登入 VPS，先確認現有服務（Hermes 8646）的狀態，不要改動它
-- 安裝 Node.js 20 LTS 以上（建議用 NodeSource 或 nvm），用 `node -v` 確認
-- 確認 port 3000 沒有被占用：`ss -ltnp | grep 3000`
+- VPS 已有 Hermes 與 Traefik；Bot 使用獨立的 `sanhe-bot` Compose 服務，Node.js 隨映像封裝，不在 VPS 主機安裝 Node。
+- 共享資料來源已確認為 `/docker/hermes-agent-llsk/data` → Hermes 容器 `/opt/data`。現有 Bot 專案目錄是 `/docker/hermes-agent-llsk/data/projects/sanhe-messenger-bot`；遠端 repo 目前有使用者新增但未提交的 `sql/` 目錄，部署時必須保留。
+- Bot 僅接入現有 `hermes-agent-llsk_default` Docker 網路，由 Traefik 代理 `bot.sameheart-design.com` 並申請 Let's Encrypt 憑證；不發布主機 3000、不改 Hermes 服務或 8646/tunnel。
+- `.env` 留在 VPS 專案目錄，不進映像、不進 Git；Compose 固定覆寫 `PUBLIC_BASE_URL=https://bot.sameheart-design.com`。
+- Compose、Dockerfile、自動部署 workflow 與限權部署腳本已準備；正式啟動公開路由已獲確認，待完成 GitHub 私鑰 Secret 設定與首次部署驗收。
 
-### B2 [P0] 取得程式碼
-- `git clone https://github.com/kaoger/VPS-message.git /opt/data/projects/sanhe-messenger-bot`
-- repo 如果是私有的，改用 deploy key
-- `npm ci --omit=dev`
+### B1 [P0] 手動部署／更新
+- 在 Bot 專案目錄先執行 `docker compose -f compose.bot.yaml config -q`。
+- 只以 `docker compose -f compose.bot.yaml up -d --build` 建立／更新 Bot；不可對整個 Hermes Compose 專案執行 `down`。
+- 確認 `sanhe-bot` 健康、3000 沒有發布到 VPS 主機，並驗收 HTTPS、`/health`、表單與 Messenger 流程。舊 trycloudflare 通道在完成驗收前保留。
 
-### B3 [P0] 建立 `.env`
-- 參照 `.env.example`，在 VPS 上直接編輯
-- 設定 `chmod 600 .env`
-- 設定 `NODE_ENV=production`
-- 用 `openssl rand -hex 32` 產生 `FORM_TOKEN_SECRET`
-- `META_VERIFY_TOKEN` 要和 Meta 後台設定的一致，正式上線使用隨機字串；實際值只保存於環境設定，勿寫入版本控制
-
-### B4 [P0] 用 systemd 常駐執行
-- 建立 `/etc/systemd/system/sanhe-messenger-bot.service`：
-  - `WorkingDirectory=/opt/data/projects/sanhe-messenger-bot`
-  - `ExecStart=/usr/bin/node src/server.js`
-  - `EnvironmentFile=` 指向 `.env`
-  - `Restart=always`
-  - 用非 root 使用者執行
-- `systemctl enable --now sanhe-messenger-bot`
-- 驗收：`curl http://127.0.0.1:3000/health` 回 `ok: true`；重開機後服務會自動啟動
-
-### B5 [P0] 固定的 HTTPS 對外網址（二選一）
-- **選項 1：網域 + nginx + Let's Encrypt**
-  - 子網域（例如 `bot.你的網域`）的 A 記錄指向 VPS IP
-  - nginx 只反向代理到 `127.0.0.1:3000`
-  - 用 certbot 申請憑證
-- **選項 2：Cloudflare named tunnel**（需要 Cloudflare 上的網域）
-  - 建立新的 tunnel 和 ingress 規則指向 `http://localhost:3000`
-  - 不可修改 Hermes 現有的 tunnel 設定
-- 不要再用 `trycloudflare.com` 臨時網址，它重開就會換網址
-- 完成後，把 `.env` 的 `PUBLIC_BASE_URL` 設為這個固定網址，並重啟服務
-
-### B6 [P1] 防火牆
-- `ufw` 只開 22（SSH）、80、443
-- 不要對外開 3000
-- Hostinger 後台如果有防火牆設定，也要同步調整
-
-### B7 [P2] 更新流程
-- 寫一個 `deploy.sh`：`git pull` → `npm ci --omit=dev` → `systemctl restart sanhe-messenger-bot` → `curl /health`
+### B2 [P1] GitHub 自動更新
+- 預期流程：GitHub push → Actions 執行 `npm test` → 透過受限 SSH 呼叫 VPS 的 Bot 專用部署命令 → 重建並重啟 `sanhe-bot` → 健康檢查。
+- 不把 Docker socket 掛進 Hermes，也不授予 Hermes 一般 root／Docker 管理權。
+- VPS 已建立 `sanhe-deploy` 限權帳號，只能經強制 SSH 命令執行 root 擁有的 Bot 部署腳本；sudo 也只允許該固定腳本。私鑰不進 Git。
+- GitHub Actions workflow 已在本機準備；尚待使用者在 GitHub repository secret `SANHE_DEPLOY_KEY` 安全貼入私鑰後，才能推送 workflow 並開始自動部署。
 
 ---
 
@@ -181,8 +152,8 @@
 4. 同一個表單連結再送一次 → 不會產生第二筆
 5. 不帶簽章 `curl -X POST /webhook` → 回 403
 6. `POST /test/message` → 回 404
-7. `sudo reboot` 後服務自動恢復
-8. `journalctl -u sanhe-messenger-bot` 裡沒有 token 和客戶個資
+7. VPS 重啟後 `sanhe-bot` 容器自動恢復；Hermes gateway 與原 tunnel 狀態不變
+8. 容器日誌裡沒有 token 和客戶個資；Traefik access log 不記錄表單 Token 查詢參數
 9. 確認 `customer_leads.answers` 為 jsonb，支援更新時的原資料比對；測試只操作明確標示的測試案件
 10. 送出後點「修改需求」→ 上次資料完整帶入（含其他地區）→ 修改電話送出 → 原案件 ID 不變、總筆數不增加、Messenger 收到最新版摘要
 11. 同時開啟兩個修改連結；先送出一個，再送出另一個 → 後者提示資料已更新，不能覆蓋新版

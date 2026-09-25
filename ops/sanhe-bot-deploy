@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+
+BOT_CONTAINER=hermes-agent-llsk-hermes-agent-1
+BOT_PROJECT=/opt/data/projects/sanhe-messenger-bot
+COMPOSE_FILE=/docker/hermes-agent-llsk/data/projects/sanhe-messenger-bot/compose.bot.yaml
+
+# Fetch and fast-forward only the Bot source in the shared data volume.
+docker exec -u 10000 "$BOT_CONTAINER" git -C "$BOT_PROJECT" fetch --quiet origin main
+docker exec -u 10000 "$BOT_CONTAINER" git -C "$BOT_PROJECT" merge --ff-only FETCH_HEAD
+
+# Operate only the independent Bot Compose service; never stop the Hermes project.
+docker compose -f "$COMPOSE_FILE" config -q
+docker compose -f "$COMPOSE_FILE" up -d --build sanhe-bot
+
+container_id=$(docker compose -f "$COMPOSE_FILE" ps -q sanhe-bot)
+if [ -z "$container_id" ]; then
+  echo "sanhe-bot container was not created" >&2
+  exit 1
+fi
+
+attempt=0
+while [ "$attempt" -lt 30 ]; do
+  status=$(docker inspect --format '{{.State.Health.Status}}' "$container_id" 2>/dev/null || true)
+  [ "$status" = healthy ] && exit 0
+  [ "$status" = unhealthy ] && break
+  attempt=$((attempt + 1))
+  sleep 2
+done
+
+echo "sanhe-bot did not become healthy" >&2
+exit 1

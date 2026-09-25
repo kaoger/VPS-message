@@ -49,6 +49,7 @@ if (!Number.isFinite(inviteMinutes) || inviteMinutes <= 0) throw new Error("Inva
 const cooldown = () => Date.now() + inviteMinutes * 60_000;
 
 const port = Number(process.env.PORT || 3000);
+const host = process.env.HOST || "127.0.0.1";
 /** webform = Messenger opens external form; chat = in-thread questions */
 const DEMO_MODE = (process.env.DEMO_MODE || "webform").toLowerCase();
 
@@ -505,8 +506,8 @@ app.use((error, _req, res, _next) => {
   res.status(error.status >= 400 && error.status < 500 ? error.status : 500).send("請求無法處理，請稍後再試。");
 });
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) app.listen(port, "127.0.0.1", () => {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) app.listen(port, host, () => {
   console.log(
-    `sanhe-messenger-bot on 127.0.0.1:${port} mode=${DEMO_MODE} steps=${FLOW.length}`
+    `sanhe-messenger-bot on ${host}:${port} mode=${DEMO_MODE} steps=${FLOW.length}`
   );
 });

@@ -52,11 +52,13 @@ Port **3000 only**。
 
 依 `DEPLOY_TODO.md` 的 B–D 執行 VPS、Meta 與實際驗收。只代理 `127.0.0.1:3000`；不要改 Hermes 的 8646 或它的 tunnel。
 
-- 單一 Node 程序以 systemd 管理，啟動命令為 `npm start` 或 `node src/server.js`。
+- 正式部署使用獨立的 `sanhe-bot` Docker Compose 服務；容器內監聽 3000，主機不發布 3000，由既有 Traefik 代理 HTTPS。詳見 `compose.bot.yaml` 與 `CONTAINER_DEPLOYMENT.md`。
+- 本機直接執行時預設只監聽 `127.0.0.1`；只有容器設定 `HOST=0.0.0.0` 時才接受容器網路連線。
+- 容器設為 `restart: unless-stopped`，VPS／Docker 重新啟動後會自動恢復。
 - 表單 Token 預設有效 2 小時。已送出 Token 在到期前鎖定；同時或再次送出回 409，不再重複執行外部操作。
 - 送出狀態、邀請冷卻與流量限制存於記憶體，重啟會清空，不支援多程序共享去重。跨重啟／多實例的唯一性需後續資料庫唯一鍵或共享儲存設計。
 - 外部 API 失敗時保留送出鎖，避免已執行但回應遺失造成重複。資料庫失敗會顯示 503，請使用者保留摘要並聯繫粉專；不自動重新寫入。
 - 每個來源 IP 每分鐘最多 20 次表單送出請求。預設不信任轉送標頭；只有單層本機代理且確實覆寫 `X-Forwarded-For` 時才設 `TRUST_LOCAL_PROXY=true`。否則代理後的使用者可能共用同一額度，須在部署驗收確認。
 - 預設 30 分鐘內只發一次邀請，送出表單後重設冷卻。用 `INVITE_COOLDOWN_MINUTES` 調整。
-- 日誌僅記錄事件名稱，不記訊息、姓名、電話、使用者識別碼或原始 API 錯誤。預設 stdout；`LOG_PATH` 可選填有效路徑。
+- 日誌僅記錄事件名稱，不記訊息、姓名、電話、使用者識別碼或原始 API 錯誤。預設 stdout；正式容器不寫本機日誌檔。
 - 反向代理的 access log 也應避免記錄 `/form?t=...` 的查詢參數，避免表單連結洩露。

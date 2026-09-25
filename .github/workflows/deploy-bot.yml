@@ -1,0 +1,49 @@
+name: Test and deploy Sanhe Bot
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DEPLOY_HOST: 187.124.137.237
+  DEPLOY_USER: sanhe-deploy
+  EXPECTED_HOST_KEY_SHA256: 969ff51ca3fb0ff19b38ba46394ebaaa490eb6b6a7f95e53fec3ef99315ca868
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure restricted SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.SANHE_DEPLOY_KEY }}
+        run: |
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/sanhe_deploy"
+          chmod 600 "$HOME/.ssh/sanhe_deploy"
+          ssh-keyscan -T 10 -t ed25519 "$DEPLOY_HOST" 2>/dev/null > "$HOME/.ssh/known_hosts"
+          chmod 644 "$HOME/.ssh/known_hosts"
+          actual_hex="$(ssh-keygen -lf "$HOME/.ssh/known_hosts" -E sha256 | awk '{print $2}' | sed 's/^SHA256://' | { read -r fp; printf '%s=' "$fp" | base64 -d | od -An -tx1 | tr -d '[:space:]'; })"
+          test "$actual_hex" = "$EXPECTED_HOST_KEY_SHA256"
+      - name: Deploy only the Bot service
+        run: >-
+          ssh -i "$HOME/.ssh/sanhe_deploy"
+          -o BatchMode=yes
+          -o IdentitiesOnly=yes
+          -o StrictHostKeyChecking=yes
+          "$DEPLOY_USER@$DEPLOY_HOST" true
