@@ -32,7 +32,7 @@ function layout(title, body) {
     <article>
 ${body}
     </article>
-    <nav><a href="/privacy">隱私權政策</a> ・ <a href="/data-deletion">資料刪除說明</a></nav>
+    <nav><a href="/privacy">隱私權政策</a> ・ <a href="/terms">服務條款</a> ・ <a href="/data-deletion">資料刪除說明</a></nav>
   </main>
 </body>
 </html>`;
@@ -77,6 +77,40 @@ export function renderPrivacyPage() {
 
       <h2>七、政策更新</h2>
       <p>本政策如有修改，將公告於本頁並更新生效日期。</p>`);
+}
+
+export function renderTermsPage() {
+  return layout("服務條款", `
+      <h1>服務條款</h1>
+      <p class="meta">${BUSINESS_NAME}　生效日期：${POLICY_EFFECTIVE_DATE}</p>
+      <p>本條款適用於${BUSINESS_NAME}（以下稱「我們」）透過 Facebook 粉絲專頁 Messenger 自動回覆及線上需求表單所提供的服務（以下稱「本服務」）。使用本服務即表示您同意本條款。</p>
+
+      <h2>一、服務內容</h2>
+      <p>本服務協助您快速提供裝潢需求（例如服務類型、地區、坪數、預算與聯絡方式），並將需求摘要回傳至 Messenger，以便我們安排專人聯繫。本服務免費提供，填寫需求不代表任何契約成立。</p>
+
+      <h2>二、報價與服務條件</h2>
+      <p>自動回覆及表單中的說明僅供參考。實際服務範圍、報價、丈量費用與施工條件，以專人聯繫後雙方確認的內容或書面契約為準。</p>
+
+      <h2>三、使用者責任</h2>
+      <ul>
+        <li>請提供正確的聯絡資料，以便我們與您聯繫。</li>
+        <li>請勿以他人名義填寫，或利用本服務傳送不實、騷擾或違法內容。</li>
+      </ul>
+
+      <h2>四、個人資料</h2>
+      <p>我們如何蒐集與使用您的資料，請見<a href="/privacy">隱私權政策</a>；刪除資料的方式請見<a href="/data-deletion">資料刪除說明</a>。</p>
+
+      <h2>五、服務變更與中斷</h2>
+      <p>我們可能因維護、系統更新或不可抗力因素調整、暫停或終止本服務。若自動回覆無法使用，您仍可直接透過 Messenger 與我們聯繫。</p>
+
+      <h2>六、第三方平台</h2>
+      <p>本服務透過 Meta（Facebook Messenger）提供，使用時亦須遵守 Meta 的使用條款。若您選擇加入我們的 LINE 官方帳號，亦適用 LINE 的相關條款。</p>
+
+      <h2>七、條款修改與準據法</h2>
+      <p>本條款如有修改，將公告於本頁並更新生效日期。本條款以中華民國法律為準據法。</p>
+
+      <h2>八、聯絡我們</h2>
+      <p>如有任何問題，請透過 Facebook 粉絲專頁「${BUSINESS_NAME}」的 Messenger 與我們聯繫。</p>`);
 }
 
 export function renderDataDeletionPage() {

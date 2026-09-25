@@ -34,7 +34,7 @@ import {
 } from "./form-schema.js";
 import { renderFormPage, renderDonePage } from "./form-page.js";
 import { serviceForTrigger } from "./service-triggers.js";
-import { renderPrivacyPage, renderDataDeletionPage } from "./legal-pages.js";
+import { renderPrivacyPage, renderTermsPage, renderDataDeletionPage } from "./legal-pages.js";
 
 const DATA_DELETION_COMMAND = "刪除我的資料";
 const DATA_DELETION_REPLY = "已收到您的資料刪除申請。我們會在核對後 30 天內刪除您透過 Messenger 與需求表單提供的資料，完成後會再通知您。";
@@ -91,6 +91,10 @@ app.get("/health", (_req, res) => {
 
 app.get("/privacy", (_req, res) => {
   res.set("Cache-Control", "public, max-age=3600").type("html").send(renderPrivacyPage());
+});
+
+app.get("/terms", (_req, res) => {
+  res.set("Cache-Control", "public, max-age=3600").type("html").send(renderTermsPage());
 });
 
 app.get("/data-deletion", (_req, res) => {

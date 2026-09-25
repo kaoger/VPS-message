@@ -259,7 +259,7 @@ test("ordinary first text gets one generic invitation; current Meta FAQ remains 
   assert.equal(sends - previous, 2);
 });
 test("public privacy and data deletion pages are served for Meta App Review", async () => {
-  for (const [path, heading, detail] of [["/privacy", "隱私權政策", /href="\/data-deletion"/], ["/data-deletion", "資料刪除說明", /刪除我的資料/]]) {
+  for (const [path, heading, detail] of [["/privacy", "隱私權政策", /href="\/data-deletion"/], ["/terms", "服務條款", /href="\/privacy"/], ["/data-deletion", "資料刪除說明", /刪除我的資料/]]) {
     const response = await request(path);
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type"), /text\/html/);
