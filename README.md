@@ -25,6 +25,8 @@ Session：記憶體、30 分鐘 TTL。
 
 正式模式需設定 `NODE_ENV=production`、固定 HTTPS 的 `PUBLIC_BASE_URL`、三項 Meta 設定，以及至少 32 字元的 `FORM_TOKEN_SECRET`，缺少時拒絕啟動。Supabase 優先讀取 `SUPABASE_SECRET_KEY`，亦支援舊的 `SUPABASE_SERVICE_ROLE_KEY`。
 
+Lead 評分規則預設讀取專案內的 `config/lead-scoring.json`，目前是空規則，不寫入評分欄位。`compose.bot.yaml` 已設定 `LEAD_SCORING_PATH` 指向唯讀掛載的規則檔；修改主機上的 `config/lead-scoring.json` 即生效，每次新增或修改案件都會重新讀取，不需重啟。**填入非空規則之前**，必須先由管理者執行 `ops/lead-scoring.sql` 加入三個欄位。
+
 - Health: `GET /health`（含 `supabaseConfigured`）
 - Webhook verify: `GET /webhook`
 - Events: `POST /webhook`（驗證原始內容的 Meta HMAC-SHA256 簽章後，先 200 再處理；所有模式均需簽章）

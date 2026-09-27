@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { scoreLeadForStorage } from "./lead-score.js";
 
 let client = null;
 
@@ -18,6 +19,13 @@ function getClient() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   return client;
+}
+
+function leadScoreColumns(answers) {
+  const { score, grade, reasons } = scoreLeadForStorage(answers);
+  // Cleared rules leave old scores unchanged on UPDATE instead of clearing them to null.
+  if (score === null) return {};
+  return { lead_score: score, lead_grade: grade, lead_score_reasons: reasons };
 }
 
 /**
@@ -41,6 +49,7 @@ export async function createCustomerLead({ senderId, answers }) {
     phone: answers.phone ?? null,
     completed_at: new Date().toISOString(),
     notification_status: "pending",
+    ...leadScoreColumns(answers),
   };
 
   const { data, error } = await supabase
@@ -94,6 +103,7 @@ export async function updateCustomerLead({ senderId, id, previousAnswers, answer
     customer_name: answers.name ?? null,
     phone: answers.phone ?? null,
     notification_status: "pending",
+    ...leadScoreColumns(answers),
   }).eq("id", id).eq("messenger_user_id", senderId)
     .eq("answers", JSON.stringify(previousAnswers)).select("id").maybeSingle();
   if (error) throw error;

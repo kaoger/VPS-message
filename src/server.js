@@ -1,6 +1,6 @@
 import "dotenv/config";
-import fs from "node:fs";
 import { pathToFileURL } from "node:url";
+import { logEvent } from "./log-event.js";
 import { validateEnvironment, validSignature, expiryStore, formRateLimit } from "./security.js";
 import express from "express";
 import {
@@ -65,20 +65,6 @@ const liveSend = {
   buttons: (id, t, opts) => meta.sendButtonTemplate(id, t, opts),
   urlButton: (id, t, spec) => meta.sendUrlButton(id, t, spec),
 };
-
-const LOG_PATH = process.env.LOG_PATH;
-
-function logEvent(...parts) {
-  const line = `[${new Date().toISOString()}] ${parts
-    .map((p) => (typeof p === "string" ? p : JSON.stringify(p)))
-    .join(" ")}\n`;
-  try {
-    if (LOG_PATH) fs.appendFileSync(LOG_PATH, line);
-  } catch {
-    /* ignore */
-  }
-  console.log(...parts);
-}
 
 app.get("/health", (_req, res) => {
   res.json({

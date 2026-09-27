@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "fields": {
+    "service": { "新成屋裝潢": 1, "舊屋翻新": 1 },
+    "area": { "高雄市": 2, "台南": 1 },
+    "size": { "31–40 坪": 2 },
+    "timeline": { "一個月內": 3 },
+    "budget": { "100–200 萬": 2 }
+  },
+  "grades": [
+    { "grade": "hot", "min": 8, "label": "🔥 高分" },
+    { "grade": "normal", "min": 4, "label": "一般" },
+    { "grade": "low", "min": 0, "label": "低" }
+  ]
+}

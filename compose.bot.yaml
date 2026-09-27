@@ -13,6 +13,7 @@ services:
       PORT: "3000"
       PUBLIC_BASE_URL: https://bot.sameheart-design.com
       LOG_PATH: ""
+      LEAD_SCORING_PATH: /opt/data/projects/sanhe-messenger-bot/config/lead-scoring.json
     expose:
       - "3000"
     read_only: true
