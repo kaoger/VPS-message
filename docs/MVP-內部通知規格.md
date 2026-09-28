@@ -149,19 +149,19 @@ alter table public.customer_leads
 **`notify-lead` 處理流程（每次被呼叫）**
 1. 驗 `x-webhook-secret`；不符 → 401。
 2. 取 payload 的 `record.id`，**原子搶單**：
-   `UPDATE customer_leads SET notification_status='sending', notification_claimed_at=now() WHERE id=$id AND status='complete' AND notification_status='pending' RETURNING *`
+   先讀列取得舊 `notification_claim_id`，再 CAS：`UPDATE … SET notification_status='sending', notification_claimed_at=now(), notification_claim_id=<新 uuid> WHERE id=$id AND notification_status='pending' AND notification_claim_id IS NOT DISTINCT FROM <舊值> RETURNING *`（實作：`supabase/functions/notify-lead/notify-core.js`）。
    - 0 列 → 回 200、不寄信、**不寫任何欄位**（這會擋住：自己寫 `sent`／`failed` 觸發的呼叫、聯絡結果寫入觸發的呼叫、重複呼叫）。
 3. 用搶到的那一列組信（永遠用資料庫最新值，不用 payload 快照）：
    - 主旨：`[【已修改】][【等級】]新客戶：{服務}／{地區}／{坪數}`。`{地區}` 用 `location` 欄；移除換行。
-   - `【已修改】`：`notified_at` 不是 null（曾成功寄過）時加。
+   - `【已修改】`：搶單前已有舊 `notification_claim_id`，或 `notified_at` 不是 null 時加（v2.1）。
    - 內文第一行：有評分 → `評分 {score}（{label}）` ＋理由清單；沒有 → `評分：尚未設定規則`。
    - 其餘內文沿用 `flow_output_fields`；**另外固定列出**服務、地區、坪數、開始時間、預算，確保修改信看得出差異。
-   - Resend 請求帶 idempotency key：`{id}:{answers._revision}`（Resend 是否支援此標頭**待查**，不支援則略過）。
+   - **不帶** idempotency key（v2.1 決定：會擋掉人工重送；極少數當機情況多寄一封內部信可接受）。
 4. 寄信成功 → `UPDATE … SET notification_status='sent', notified_at=now(), notification_email=… WHERE id=$id AND notification_status='sending'`（Step 3 的 token 也在**同一句**寫入）。
 5. 寄信失敗或任何例外 → `UPDATE … SET notification_status='failed' WHERE id=$id AND notification_status='sending'`。
-6. 客戶在寄信途中修改：`updateCustomerLead` 會把狀態改回 `pending`，第 4／5 步因條件不符寫 0 列；該次修改觸發的呼叫會搶到並寄新版。**結果：最多寄兩封（舊版＋新版），不會漏新版。**
+6. 第 4／5 步的 UPDATE 另加 `notification_claim_id = <本次 claim id>`，只能回寫自己搶到的那次（v2.1，修正 Grok 指出的誤標）。客戶在寄信途中修改：`updateCustomerLead` 會把狀態改回 `pending`，舊 worker 回寫 0 列（記 `notification_mark_stale`）；該次修改觸發的呼叫會搶到並寄新版。**結果：最多寄兩封（舊版＋新版），不會漏新版。**
 
-**`updateCustomerLead` 修改**：`notification_status` 原本是 `not_required` 時保持不變，其他情況改回 `pending`。
+**`updateCustomerLead` 修改**：同一句 CAS UPDATE 寫入資料＋`notification_status='pending'`，條件加 `neq not_required`；0 列時再以不含狀態的 CAS UPDATE 重試（處理 `not_required`）。
 
 **後台設定**：webhook `notify-complete-lead` 事件多勾 **Update**。勾完用 0a 的 SQL 再查一次，確認仍然只有一個 webhook trigger、事件為 `INSERT,UPDATE`。
 
@@ -232,4 +232,5 @@ alter table public.customer_leads
 
 採納：寄信搶單與 `sending` 狀態、token 與 `sent` 同句寫入、`not_required` 不重設、聯絡結果不觸發寄信、token 到期與 log 遮罩、無效連結回應一致、獨立限流、SQL 先於程式、評分設定檔格式與路徑、情境補齊必填欄位、主旨地區用 `location`、卡住通知的檢查查詢、0d 第 28 行處理、0e 順序與 anon 取代 service_role、`messenger-webhook` 處置、審核期間不推 `main`。
 未採納：一次性 nonce／操作者紀錄（單人使用，最後一次為準即可）；新舊 `WEBHOOK_SECRET` 並存期（改以一分鐘內更新＋事後檢查 `pending` 處理）。
-待查：Resend idempotency 標頭；`set_customer_leads_updated_at` 是否只改 `NEW.updated_at`；webhook 對非 200 是否重送。
+v2.1（Step 2 Grok 兩輪紅隊）：改用 claim id 回寫、移除 idempotency key、修改改回一步寫入、SQL 包交易、卡住查詢改看 `notification_claimed_at`。
+待查：`set_customer_leads_updated_at` 是否只改 `NEW.updated_at`；webhook 對非 200 是否重送。

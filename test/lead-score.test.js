@@ -139,7 +139,7 @@ test("Supabase INSERT and UPDATE include scored columns but omit them without a 
   globalThis.fetch = async (url, options) => {
     assert.ok(String(url).startsWith("https://scoring-test.supabase.co/rest/v1/customer_leads"));
     assert.ok(["POST", "PATCH"].includes(options.method));
-    writes.push({ method: options.method, body: JSON.parse(options.body) });
+    writes.push({ method: options.method, body: JSON.parse(options.body), url: String(url) });
     return Response.json({ id: "test-lead" }, { status: options.method === "POST" ? 201 : 200 });
   };
   try {
@@ -148,7 +148,7 @@ test("Supabase INSERT and UPDATE include scored columns but omit them without a 
     await updateCustomerLead({ senderId: "test-sender", id: "test-lead", previousAnswers: chen,
       answers: { ...chen, area: "其他地區", area_other: "台南" } });
     assert.deepEqual(writes.map(write => write.method), ["POST", "PATCH"]);
-    for (const write of writes) {
+    for (const write of writes.slice(0, 2)) {
       for (const key of ["lead_score", "lead_grade", "lead_score_reasons"]) {
         assert.ok(Object.hasOwn(write.body, key));
       }
@@ -159,13 +159,14 @@ test("Supabase INSERT and UPDATE include scored columns but omit them without a 
     assert.equal(writes[1].body.lead_grade, "hot");
     assert.equal(writes[1].body.lead_score_reasons.length, 4);
     assert.equal(writes[1].body.notification_status, "pending");
+    assert.ok(writes[1].url.includes("notification_status=neq.not_required"));
 
     process.env.LEAD_SCORING_PATH = "config/lead-scoring.json";
     await createCustomerLead({ senderId: "test-sender", answers: chen });
     await updateCustomerLead({ senderId: "test-sender", id: "test-lead", previousAnswers: chen,
       answers: chen });
     assert.deepEqual(writes.slice(2).map(write => write.method), ["POST", "PATCH"]);
-    for (const write of writes.slice(2)) {
+    for (const write of writes.slice(2, 4)) {
       for (const key of ["lead_score", "lead_grade", "lead_score_reasons"]) {
         assert.equal(Object.hasOwn(write.body, key), false);
       }
@@ -186,7 +187,7 @@ test("Supabase INSERT and UPDATE include scored columns but omit them without a 
     await createCustomerLead({ senderId: "test-sender", answers: failingAnswers() });
     await updateCustomerLead({ senderId: "test-sender", id: "test-lead", previousAnswers: chen,
       answers: failingAnswers() });
-    for (const write of writes.slice(4)) {
+    for (const write of writes.slice(4, 6)) {
       for (const key of ["lead_score", "lead_grade", "lead_score_reasons"]) {
         assert.equal(Object.hasOwn(write.body, key), false);
       }
@@ -196,6 +197,62 @@ test("Supabase INSERT and UPDATE include scored columns but omit them without a 
     globalThis.fetch = previousFetch;
     console.log = previousLog;
     for (const [key, value] of [["LEAD_SCORING_PATH", previousPath], ["SUPABASE_URL", previousUrl], ["SUPABASE_SECRET_KEY", previousKey]]) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test("zero-row first CAS retries without notification status for not_required or NULL", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousUrl = process.env.SUPABASE_URL;
+  const previousKey = process.env.SUPABASE_SECRET_KEY;
+  const writes = [];
+  process.env.SUPABASE_URL = "https://scoring-test.supabase.co";
+  process.env.SUPABASE_SECRET_KEY = "test-only-key";
+  globalThis.fetch = async (url, options) => {
+    writes.push({ url: String(url), body: JSON.parse(options.body) });
+    return Response.json(writes.length === 1 ? [] : [{ id: "test-lead" }]);
+  };
+  try {
+    const result = await updateCustomerLead({ senderId: "test-sender", id: "test-lead",
+      previousAnswers: chen, answers: chen });
+    assert.deepEqual(result, { id: "test-lead" });
+    assert.equal(writes[0].body.notification_status, "pending");
+    assert.ok(writes[0].url.includes("notification_status=neq.not_required"));
+    assert.equal(Object.hasOwn(writes[1].body, "notification_status"), false);
+    assert.ok(!writes[1].url.includes("notification_status=neq.not_required"));
+    assert.ok(writes.every(write => write.url.includes("id=eq.test-lead") &&
+      write.url.includes("messenger_user_id=eq.test-sender") && write.url.includes("answers=eq.")));
+  } finally {
+    globalThis.fetch = previousFetch;
+    for (const [key, value] of [["SUPABASE_URL", previousUrl], ["SUPABASE_SECRET_KEY", previousKey]]) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test("two zero-row CAS updates return null for a version conflict", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousUrl = process.env.SUPABASE_URL;
+  const previousKey = process.env.SUPABASE_SECRET_KEY;
+  const writes = [];
+  process.env.SUPABASE_URL = "https://scoring-test.supabase.co";
+  process.env.SUPABASE_SECRET_KEY = "test-only-key";
+  globalThis.fetch = async (url, options) => {
+    writes.push({ url: String(url), body: JSON.parse(options.body) });
+    return Response.json([]);
+  };
+  try {
+    assert.equal(await updateCustomerLead({ senderId: "test-sender", id: "test-lead",
+      previousAnswers: chen, answers: chen }), null);
+    assert.equal(writes.length, 2);
+    assert.equal(writes[0].body.notification_status, "pending");
+    assert.equal(Object.hasOwn(writes[1].body, "notification_status"), false);
+  } finally {
+    globalThis.fetch = previousFetch;
+    for (const [key, value] of [["SUPABASE_URL", previousUrl], ["SUPABASE_SECRET_KEY", previousKey]]) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }

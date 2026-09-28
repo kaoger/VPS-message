@@ -92,8 +92,8 @@ export async function readCustomerLead({ senderId, id }) {
 
 export async function updateCustomerLead({ senderId, id, previousAnswers, answers }) {
   // Compare-and-swap protects against stale forms, even across server restarts.
-  // Never reset workflow status or the original submission timestamp.
-  const { data, error } = await getClient().from("customer_leads").update({
+  // Preserve the original submission timestamp and other workflow fields.
+  const changes = {
     answers,
     location: answers.area === "其他地區" ? answers.area_other : answers.area ?? null,
     project_type: answers.service ?? null,
@@ -102,12 +102,21 @@ export async function updateCustomerLead({ senderId, id, previousAnswers, answer
     start_time: answers.timeline ?? null,
     customer_name: answers.name ?? null,
     phone: answers.phone ?? null,
-    notification_status: "pending",
     ...leadScoreColumns(answers),
-  }).eq("id", id).eq("messenger_user_id", senderId)
-    .eq("answers", JSON.stringify(previousAnswers)).select("id").maybeSingle();
+  };
+  const match = (query) => query.eq("id", id).eq("messenger_user_id", senderId)
+    .eq("answers", JSON.stringify(previousAnswers));
+
+  const { data, error } = await match(getClient().from("customer_leads")
+    .update({ ...changes, notification_status: "pending" }))
+    .neq("notification_status", "not_required").select("id").maybeSingle();
   if (error) throw error;
-  return data;
+  if (data?.id) return data;
+
+  const { data: fallback, error: fallbackError } = await match(getClient()
+    .from("customer_leads").update(changes)).select("id").maybeSingle();
+  if (fallbackError) throw fallbackError;
+  return fallback;
 }
 
 export function isSupabaseConfigured() {

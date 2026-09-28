@@ -1,4 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { buildSubject, buildScoreBlockHtml, buildKeyFieldsHtml, escapeHtml, display } from './format.js'
+import { claimLead, markNotification } from './notify-core.js'
 
 type LeadRecord = {
   id: string
@@ -14,6 +16,12 @@ type LeadRecord = {
   phone: string | null
   answers: Record<string, string> | null
   notification_status: string
+  notification_claim_id: string | null
+  notified_at: string | null
+  updated_at: string | null
+  lead_score: number | null
+  lead_grade: string | null
+  lead_score_reasons: string[] | null
 }
 
 type OutputField = { label: string; answerKey: string; sortOrder: number }
@@ -35,17 +43,6 @@ const valueLabels: Record<string, string> = {
   SIZE_UNDER_20: '20 坪以下', SIZE_21_30: '21–30 坪', SIZE_31_40: '31–40 坪', SIZE_41_60: '41–60 坪', SIZE_61_PLUS: '61 坪以上', SIZE_UNKNOWN: '尚未確定',
   BUDGET_UNDER_50: '50 萬以下', BUDGET_50_100: '50–100 萬', BUDGET_100_200: '100–200 萬', BUDGET_200_300: '200–300 萬', BUDGET_300_PLUS: '300 萬以上', BUDGET_UNKNOWN: '尚未確定',
   TIME_WITHIN_MONTH: '一個月內', TIME_1_3_MONTHS: '1–3 個月', TIME_3_6_MONTHS: '3–6 個月', TIME_6_PLUS_MONTHS: '半年以上', TIME_UNKNOWN: '尚未確定',
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/[&<>'"]/g, (character) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-  })[character] ?? character)
-}
-
-function display(value: string | null | undefined, labels: Record<string, string>) {
-  if (!value) return '未填寫'
-  return labels[value] ?? value
 }
 
 const fallbackOutputFields: OutputField[] = [
@@ -96,7 +93,7 @@ async function loadValueLabels() {
     .select('label, value')
 
   if (error) {
-    console.error('question option labels load failed:', error)
+    console.error('question option labels load failed')
     return valueLabels
   }
 
@@ -124,40 +121,8 @@ function htmlForLead(lead: LeadRecord, fields: OutputField[], labels: Record<str
   return '<h2>有新的完成案件</h2><p>來源：' + sourceLabel + '</p><ul>' + items + '</ul>'
 }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function markNotification(
-  leadId: string,
-  status: 'sent' | 'failed',
-  extra: Record<string, unknown> = {},
-) {
-  const delays = [0, 150, 400, 900, 1600]
-  let lastError: unknown = null
-
-  for (const delay of delays) {
-    if (delay) await sleep(delay)
-
-    const { data, error } = await supabaseAdmin
-      .from('customer_leads')
-      .update({
-        notification_status: status,
-        ...extra,
-      })
-      .eq('id', leadId)
-      .select('id')
-      .maybeSingle()
-
-    if (!error && data?.id) return true
-    lastError = error ?? new Error('Lead row not visible yet')
-  }
-
-  console.error('notification status update failed:', lastError)
-  return false
-}
-
 Deno.serve(async (request) => {
+  let claimedId: { id: string; claimId: string } | null = null
   try {
     if (!webhookSecret || request.headers.get('x-webhook-secret') !== webhookSecret) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -167,13 +132,22 @@ Deno.serve(async (request) => {
     }
 
     const payload = await request.json()
-    const lead = payload.record as LeadRecord | undefined
+    const id = payload?.record?.id
 
-    if (!lead || lead.status !== 'complete' || lead.notification_status !== 'pending') {
+    if (typeof id !== 'string' || !id) {
       return new Response(JSON.stringify({ skipped: true }), {
         headers: { 'content-type': 'application/json' },
       })
     }
+
+    const claim = await claimLead(supabaseAdmin, id)
+    if (!claim) {
+      return new Response(JSON.stringify({ skipped: true }), {
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const { lead, claimId, modified } = claim as { lead: LeadRecord; claimId: string; modified: boolean }
+    claimedId = { id, claimId }
 
     if (!resendApiKey || !notificationEmail) {
       throw new Error('Missing RESEND_API_KEY or NOTIFICATION_EMAIL')
@@ -193,33 +167,40 @@ Deno.serve(async (request) => {
       body: JSON.stringify({
         from: emailFrom,
         to: [notificationEmail],
-        subject: '新完成案件：' + (lead.customer_name ?? '未填姓名'),
-        html: htmlForLead(lead, outputFields, labels),
+        subject: buildSubject(lead, labels, { modified }),
+        html: buildScoreBlockHtml(lead) + buildKeyFieldsHtml(lead, labels) + htmlForLead(lead, outputFields, labels),
       }),
     })
 
     if (!response.ok) {
-      const body = await response.text()
-      await markNotification(lead.id, 'failed')
-      throw new Error('Resend error ' + response.status + ': ' + body)
+      console.error('Resend error status:', response.status)
+      throw new Error('Resend request failed')
     }
 
-    const updated = await markNotification(lead.id, 'sent', {
+    const markResult = await markNotification(supabaseAdmin, lead.id, claimId, 'sent', {
       notification_email: notificationEmail,
       notified_at: new Date().toISOString(),
     })
 
-    if (!updated) {
+    if (markResult === 'stale') console.error('notification_mark_stale')
+    if (markResult === 'error') {
       throw new Error('Email sent but failed to persist notification status')
     }
 
     return new Response(JSON.stringify({ sent: true }), {
       headers: { 'content-type': 'application/json' },
     })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown notification error'
-    console.error('notify-lead failed:', error)
-    return new Response(JSON.stringify({ error: message }), {
+  } catch {
+    if (claimedId) {
+      try {
+        const markResult = await markNotification(supabaseAdmin, claimedId.id, claimedId.claimId, 'failed')
+        if (markResult === 'stale') console.error('notification_mark_stale')
+        if (markResult === 'error') console.error('notification status update failed')
+      }
+      catch { console.error('notification failure status update failed') }
+    }
+    console.error('notify-lead failed')
+    return new Response(JSON.stringify({ error: 'Notification failed' }), {
       status: 500,
       headers: { 'content-type': 'application/json' },
     })
