@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildSubject, buildScoreBlockHtml, buildKeyFieldsHtml } from '../supabase/functions/notify-lead/format.js'
+import { buildSubject, buildScoreBlockHtml, buildKeyFieldsHtml, buildOutcomeLinksHtml, parseOutcomeBaseUrl } from '../supabase/functions/notify-lead/format.js'
 
 const chen = {
   project_type: '新成屋裝潢', location: '高雄市', interior_area: '31–40 坪',
@@ -37,4 +37,33 @@ test('score reasons and fixed fields escape HTML and show missing values', () =>
   assert.ok(fields.includes('地區</strong>：&lt;script&gt;'))
   assert.ok(fields.includes('預算</strong>：未填'))
   assert.equal((fields.match(/<li>/g) ?? []).length, 5)
+})
+
+test('outcome links contain four encoded choices and escape URL HTML', () => {
+  const html = buildOutcomeLinksHtml('https://example.test/', 'id &?', 'token+&')
+  assert.equal((html.match(/<a href=/g) ?? []).length, 4)
+  for (const result of ['contacted', 'site_visit', 'not_interested', 'unreachable']) {
+    assert.ok(html.includes(`r=${result}`))
+  }
+  assert.ok(html.includes('id=id%20%26%3F'))
+  assert.ok(html.includes('t=token%2B%26'))
+  assert.ok(html.includes('&amp;t='))
+  assert.ok(!html.includes('<bad>'))
+  assert.equal(buildOutcomeLinksHtml('', 'id', 'token'), '')
+})
+
+test('outcome base URL accepts only an HTTPS origin with at most one trailing slash', () => {
+  assert.equal(parseOutcomeBaseUrl('https://bot.sameheart-design.com'), 'https://bot.sameheart-design.com')
+  assert.equal(parseOutcomeBaseUrl('https://bot.sameheart-design.com/'), 'https://bot.sameheart-design.com')
+  for (const value of [
+    'http://bot.sameheart-design.com',
+    'https://bot.sameheart-design.com/lead/outcome',
+    'https://bot.sameheart-design.com?x=1',
+    'https://bot.sameheart-design.com#part',
+    'https://bot.sameheart-design.com//',
+    '', 'garbage',
+  ]) {
+    assert.equal(parseOutcomeBaseUrl(value), null, value)
+    assert.equal(buildOutcomeLinksHtml(value, 'id', 'token'), '', value)
+  }
 })

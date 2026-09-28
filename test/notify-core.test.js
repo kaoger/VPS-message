@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { claimLead, markNotification } from '../supabase/functions/notify-lead/notify-core.js'
+import { claimLead, markNotification, createOutcomeToken } from '../supabase/functions/notify-lead/notify-core.js'
+import crypto from 'node:crypto'
 
 function fakeClient(initialRow) {
   const state = { row: initialRow && { ...initialRow }, reads: 0, writes: 0 }
@@ -106,4 +107,46 @@ test('pending row with notified_at but no claim id is modified', async () => {
   })
   const claim = await claimLead(client, 'lead-1', options())
   assert.equal(claim.modified, true)
+})
+
+test('outcome token is 32 random bytes encoded as base64url with SHA-256 hash', async () => {
+  const first = await createOutcomeToken()
+  const second = await createOutcomeToken()
+  assert.match(first.token, /^[A-Za-z0-9_-]{43}$/)
+  assert.equal(Buffer.from(first.token, 'base64url').length, 32)
+  assert.equal(first.hash, crypto.createHash('sha256').update(first.token).digest('hex'))
+  assert.notEqual(first.token, second.token)
+})
+
+test('sent update stores notification and token columns in one write', async () => {
+  const { client, state } = fakeClient(initial())
+  const claim = await claimLead(client, 'lead-1', options())
+  const { hash } = await createOutcomeToken()
+  const before = state.writes
+  assert.equal(await markNotification(client, 'lead-1', claim.claimId, 'sent', {
+    notified_at: '2026-09-28T00:00:00Z',
+    outcome_token_hash: hash,
+    outcome_token_expires_at: '2026-10-12T00:00:00Z',
+  }, markOptions), 'updated')
+  assert.equal(state.writes, before + 1)
+  assert.equal(state.row.notification_status, 'sent')
+  assert.equal(state.row.outcome_token_hash, hash)
+  assert.equal(state.row.outcome_token_expires_at, '2026-10-12T00:00:00Z')
+})
+
+test('recording contact result on a sent lead does not claim or resend it', async () => {
+  const { client, state } = fakeClient(initial())
+  const claim = await claimLead(client, 'lead-1', options())
+  assert.equal(await markNotification(client, 'lead-1', claim.claimId, 'sent', {
+    notified_at: '2026-09-28T00:01:00Z',
+  }, markOptions), 'updated')
+  await client.from('customer_leads').update({
+    contact_result: 'contacted',
+    contact_result_at: '2026-09-28T00:02:00Z',
+  }).eq('id', 'lead-1').select('id').maybeSingle()
+  const before = structuredClone(state.row)
+  const writes = state.writes
+  assert.equal(await claimLead(client, 'lead-1', options('again')), null)
+  assert.deepEqual(state.row, before)
+  assert.equal(state.writes, writes)
 })

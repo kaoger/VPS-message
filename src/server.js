@@ -35,6 +35,7 @@ import {
 import { renderFormPage, renderDonePage } from "./form-page.js";
 import { serviceForTrigger } from "./service-triggers.js";
 import { renderPrivacyPage, renderTermsPage, renderDataDeletionPage } from "./legal-pages.js";
+import { leadOutcomeRouter } from "./lead-outcome.js";
 
 const DATA_DELETION_COMMAND = "刪除我的資料";
 const DATA_DELETION_REPLY = "已收到您的資料刪除申請。我們會在核對後 30 天內刪除您透過 Messenger 與需求表單提供的資料，完成後會再通知您。";
@@ -49,6 +50,7 @@ app.use((_req, res, next) => {
   res.set({ "Referrer-Policy": "no-referrer", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
   next();
 });
+app.use("/lead/outcome", leadOutcomeRouter);
 const submissions = expiryStore();
 const invites = expiryStore();
 

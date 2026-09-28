@@ -124,3 +124,32 @@ export function isSupabaseConfigured() {
     process.env.SUPABASE_URL && (process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)
   );
 }
+
+export async function readOutcomeToken(id) {
+  const { data, error } = await getClient().from("customer_leads")
+    .select("outcome_token_hash,outcome_token_expires_at")
+    .eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function recordContactResult({ id, hash, result, now }) {
+  const match = (query) => query.eq("id", id)
+    .eq("outcome_token_hash", hash)
+    .gt("outcome_token_expires_at", now);
+  const { data, error } = await match(getClient().from("customer_leads")
+    .update({ contact_result: result, contact_result_at: now }))
+    .select("id").maybeSingle();
+  if (error) throw error;
+  if (!data?.id) return false;
+
+  // This second guarded write only fills the first contact time once.
+  // A failure here must not turn an already saved result into an error page.
+  try {
+    await match(getClient().from("customer_leads")
+      .update({ contact_first_at: now }))
+      .is("contact_first_at", null)
+      .select("id").maybeSingle();
+  } catch { /* The result above is already saved. */ }
+  return true;
+}

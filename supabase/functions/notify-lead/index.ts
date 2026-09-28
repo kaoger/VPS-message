@@ -1,6 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { buildSubject, buildScoreBlockHtml, buildKeyFieldsHtml, escapeHtml, display } from './format.js'
-import { claimLead, markNotification } from './notify-core.js'
+import { buildSubject, buildScoreBlockHtml, buildKeyFieldsHtml, buildOutcomeLinksHtml, escapeHtml, display, parseOutcomeBaseUrl } from './format.js'
+import { claimLead, markNotification, createOutcomeToken } from './notify-core.js'
 
 type LeadRecord = {
   id: string
@@ -35,6 +35,9 @@ const resendApiKey = Deno.env.get('RESEND_API_KEY')
 const notificationEmail = Deno.env.get('NOTIFICATION_EMAIL')
 const emailFrom = Deno.env.get('EMAIL_FROM') || (() => { throw new Error('Missing EMAIL_FROM') })()
 const webhookSecret = Deno.env.get('WEBHOOK_SECRET')
+const configuredOutcomeBaseUrl = Deno.env.get('OUTCOME_BASE_URL')
+const outcomeBaseUrl = parseOutcomeBaseUrl(configuredOutcomeBaseUrl)
+if (configuredOutcomeBaseUrl !== undefined && !outcomeBaseUrl) console.error('outcome_base_url_invalid')
 const FLOW_KEY = 'interior_design_lead_v1'
 
 const valueLabels: Record<string, string> = {
@@ -158,6 +161,8 @@ Deno.serve(async (request) => {
       loadValueLabels(),
     ])
 
+    const outcome = outcomeBaseUrl ? await createOutcomeToken() : null
+
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -168,7 +173,8 @@ Deno.serve(async (request) => {
         from: emailFrom,
         to: [notificationEmail],
         subject: buildSubject(lead, labels, { modified }),
-        html: buildScoreBlockHtml(lead) + buildKeyFieldsHtml(lead, labels) + htmlForLead(lead, outputFields, labels),
+        html: buildScoreBlockHtml(lead) + buildKeyFieldsHtml(lead, labels) + htmlForLead(lead, outputFields, labels) +
+          (outcome ? buildOutcomeLinksHtml(outcomeBaseUrl, lead.id, outcome.token) : ''),
       }),
     })
 
@@ -177,9 +183,14 @@ Deno.serve(async (request) => {
       throw new Error('Resend request failed')
     }
 
+    const sentAt = new Date()
     const markResult = await markNotification(supabaseAdmin, lead.id, claimId, 'sent', {
       notification_email: notificationEmail,
-      notified_at: new Date().toISOString(),
+      notified_at: sentAt.toISOString(),
+      ...(outcome ? {
+        outcome_token_hash: outcome.hash,
+        outcome_token_expires_at: new Date(sentAt.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+      } : {}),
     })
 
     if (markResult === 'stale') console.error('notification_mark_stale')

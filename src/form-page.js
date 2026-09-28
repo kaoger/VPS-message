@@ -216,7 +216,7 @@ export function renderDonePage({ summary, messengerOk, heading, editUrl, newForm
 </html>`;
 }
 
-function escapeHtml(s) {
+export function escapeHtml(s) {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

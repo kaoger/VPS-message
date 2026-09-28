@@ -49,3 +49,28 @@ export function buildKeyFieldsHtml(lead, labels) {
     `<li><strong>${name}</strong>：${escapeHtml(fieldValue(value, labels))}</li>`
   ).join('') + '</ul>'
 }
+
+export function parseOutcomeBaseUrl(value) {
+  if (typeof value !== 'string' || !/^https:\/\/[^/?#]+\/?$/.test(value)) return null
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) return null
+    return url.origin
+  } catch { return null }
+}
+
+export function buildOutcomeLinksHtml(baseUrl, id, token) {
+  const origin = parseOutcomeBaseUrl(baseUrl)
+  if (!origin) return ''
+  const outcomes = [
+    ['已聯絡', 'contacted'],
+    ['約丈量', 'site_visit'],
+    ['沒興趣', 'not_interested'],
+    ['聯絡不上', 'unreachable'],
+  ]
+  const links = outcomes.map(([label, result]) => {
+    const url = `${origin}/lead/outcome?id=${encodeURIComponent(id)}&t=${encodeURIComponent(token)}&r=${encodeURIComponent(result)}`
+    return `<li><a href="${escapeHtml(url)}">${escapeHtml(label)}</a></li>`
+  }).join('')
+  return `<h2>聯絡結果</h2><ul>${links}</ul><p>連結 14 天內有效；點開後需再按一次確認</p>`
+}

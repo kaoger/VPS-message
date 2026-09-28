@@ -57,3 +57,22 @@ export function formRateLimit({ max = 20, windowMs = 60_000 } = {}) {
     next();
   };
 }
+
+export function failureLimiter({ max = 60, windowMs = 60_000 } = {}) {
+  const entries = new Map();
+  setInterval(() => {
+    for (const [key, value] of entries) if (value.until <= Date.now()) entries.delete(key);
+  }, windowMs).unref();
+  return {
+    recordFailure(key) {
+      const now = Date.now();
+      let item = entries.get(key);
+      if (!item || item.until <= now) {
+        item = { count: 0, until: now + windowMs };
+        entries.set(key, item);
+      }
+      item.count++;
+      return item.count > max ? Math.ceil((item.until - now) / 1000) : 0;
+    },
+  };
+}
