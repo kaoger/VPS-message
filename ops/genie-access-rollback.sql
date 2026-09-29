@@ -8,6 +8,8 @@ drop trigger if exists genie_contact_timestamps on public.customer_leads;
 drop function if exists public.genie_set_contact_timestamps();
 
 -- Section 5.2 read columns; without the trigger the browser must write times.
+-- This minimal rollback does not grant messenger_user_id automatically. To
+-- revoke that column's access, run the revoke in genie-messenger-link.sql's header.
 grant select (
   id, status, answers, customer_name, phone, project_type, location,
   interior_area, budget_range, start_time, completed_at, contact_result,

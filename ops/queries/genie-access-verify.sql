@@ -1,4 +1,5 @@
--- Run as postgres in Supabase SQL Editor after genie-access.sql.
+-- Run as postgres in Supabase SQL Editor after genie-access.sql and
+-- genie-messenger-link.sql.
 -- Replace only <成員 uuid> (an existing active app_admins member) and
 -- <非成員 uuid> (another Authentication user absent from app_admins).
 -- If there is no second user, first create a test account in Authentication.
@@ -22,6 +23,7 @@ declare
   case_sql text;
   customer text;
   customer_phone text;
+  member_messenger_user_id text;
   first_at timestamptz;
   result_at timestamptz;
   next_result_at timestamptz;
@@ -193,12 +195,17 @@ begin
     raise exception 'GENIE_ACCESS_FAIL: active member SELECT customer_name/phone';
   end if;
   raise notice '%: correct test values', cell;
+  cell := 'active member SELECT messenger_user_id';
+  execute 'select messenger_user_id from public.customer_leads where id::text = $1'
+    into member_messenger_user_id using lead_id;
+  if member_messenger_user_id is distinct from sender_id then
+    raise exception 'GENIE_ACCESS_FAIL: active member SELECT messenger_user_id (expected test lead value)';
+  end if;
+  raise notice '%: matches test lead value', cell;
   for case_label, case_sql in
     select v.label, v.stmt from (values
       ('active member SELECT outcome_token_hash',
-       'select outcome_token_hash from public.customer_leads where id::text = $1'),
-      ('active member SELECT messenger_user_id',
-       'select messenger_user_id from public.customer_leads where id::text = $1')
+       'select outcome_token_hash from public.customer_leads where id::text = $1')
     ) as v(label, stmt)
   loop
     cell := case_label;
