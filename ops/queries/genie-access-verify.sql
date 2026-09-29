@@ -1,5 +1,5 @@
--- Run as postgres in Supabase SQL Editor after genie-access.sql and
--- genie-messenger-link.sql.
+-- Run as postgres in Supabase SQL Editor after genie-access.sql,
+-- genie-messenger-link.sql and genie-undo.sql.
 -- Replace only <成員 uuid> (an existing active app_admins member) and
 -- <非成員 uuid> (another Authentication user absent from app_admins).
 -- If there is no second user, first create a test account in Authentication.
@@ -28,8 +28,13 @@ declare
   result_at timestamptz;
   next_result_at timestamptz;
   saved_first_at timestamptz;
+  undo_until timestamptz;
+  saved_undo_until timestamptz;
+  undo_result text;
+  stored_result text;
   service_result_at timestamptz;
   service_first_at timestamptz;
+  service_undo_until timestamptz;
   function_source text;
 begin
   member_id := '<成員 uuid>'::uuid;
@@ -110,6 +115,15 @@ begin
     end;
   end loop;
 
+  cell := 'anon EXECUTE genie_undo_contact_result';
+  begin
+    execute 'select public.genie_undo_contact_result($1::uuid, $2, $3)'
+      into undo_result using lead_id, 'contacted', pg_catalog.clock_timestamp();
+    raise exception 'GENIE_ACCESS_FAIL: % (expected 42501)', cell;
+  exception when insufficient_privilege then
+    raise notice '%: 42501', cell;
+  end;
+
   cell := 'switch to non-member';
   execute 'reset role';
   execute 'set local role postgres';
@@ -131,6 +145,13 @@ begin
   get diagnostics n = row_count;
   if n <> 0 then raise exception 'GENIE_ACCESS_FAIL: non-member UPDATE contact_result (expected 0)'; end if;
   raise notice '%: 0 rows', cell;
+  cell := 'non-member EXECUTE genie_undo_contact_result';
+  execute 'select public.genie_undo_contact_result($1::uuid, $2, $3)'
+    into undo_result using lead_id, 'contacted', pg_catalog.clock_timestamp();
+  if undo_result is distinct from 'forbidden' then
+    raise exception 'GENIE_ACCESS_FAIL: non-member EXECUTE genie_undo_contact_result';
+  end if;
+  raise notice '%: forbidden', cell;
   for case_label, case_sql in
     select v.label, v.stmt from (values
       ('non-member UPDATE phone',
@@ -177,6 +198,13 @@ begin
   get diagnostics n = row_count;
   if n <> 0 then raise exception 'GENIE_ACCESS_FAIL: disabled member UPDATE contact_result (expected 0)'; end if;
   raise notice '%: 0 rows', cell;
+  cell := 'disabled member EXECUTE genie_undo_contact_result';
+  execute 'select public.genie_undo_contact_result($1::uuid, $2, $3)'
+    into undo_result using lead_id, 'contacted', pg_catalog.clock_timestamp();
+  if undo_result is distinct from 'forbidden' then
+    raise exception 'GENIE_ACCESS_FAIL: disabled member EXECUTE genie_undo_contact_result';
+  end if;
+  raise notice '%: forbidden', cell;
 
   cell := 'switch to active member';
   execute 'reset role';
@@ -218,23 +246,121 @@ begin
   end loop;
 
   cell := 'active member first UPDATE contact_result/timestamps';
-  execute 'update public.customer_leads set contact_result = ''contacted''
-           where id::text = $1 returning contact_result_at, contact_first_at'
-    into result_at, first_at using lead_id;
-  if not found or result_at is null or first_at is null or result_at <> first_at then
+  execute 'update public.customer_leads set contact_result = ''site_visit''
+           where id::text = $1
+           returning contact_result_at, contact_first_at, contact_undo_until'
+    into result_at, first_at, undo_until using lead_id;
+  if not found or result_at is null or first_at is distinct from result_at
+     or undo_until is distinct from result_at + interval '15 minutes' then
     raise exception 'GENIE_ACCESS_FAIL: active member first UPDATE contact_result/timestamps';
   end if;
-  raise notice '%: trigger filled both times', cell;
+  raise notice '%: both times filled, undo opens for 15 minutes', cell;
+
+  cell := 'active member same-result UPDATE preserves all times';
+  execute 'update public.customer_leads set contact_result = ''site_visit''
+           where id::text = $1
+           returning contact_result_at, contact_first_at, contact_undo_until'
+    into next_result_at, saved_first_at, saved_undo_until using lead_id;
+  if not found or next_result_at is distinct from result_at
+     or saved_first_at is distinct from first_at
+     or saved_undo_until is distinct from undo_until then
+    raise exception 'GENIE_ACCESS_FAIL: active member same-result UPDATE preserves all times';
+  end if;
+  raise notice '%: all three times unchanged', cell;
+
+  cell := 'active member undo correct expected values';
+  execute 'select public.genie_undo_contact_result($1::uuid, $2, $3)'
+    into undo_result using lead_id, 'site_visit', result_at;
+  if undo_result is distinct from 'undone' then
+    raise exception 'GENIE_ACCESS_FAIL: active member undo correct expected values';
+  end if;
+  execute 'select contact_result, contact_result_at, contact_first_at,
+                  contact_undo_until
+             from public.customer_leads where id::text = $1'
+    into stored_result, result_at, first_at, undo_until using lead_id;
+  if not found or stored_result is not null or result_at is not null
+     or first_at is not null
+     or undo_until is not null then
+    raise exception 'GENIE_ACCESS_FAIL: active member undo did not clear all times';
+  end if;
+  raise notice '%: undone, all three times null', cell;
+
+  cell := 'active member undo missing lead';
+  execute 'select public.genie_undo_contact_result($1, $2, $3)'
+    into undo_result using pg_catalog.gen_random_uuid(), 'site_visit', pg_catalog.clock_timestamp();
+  if undo_result is distinct from 'not_found' then
+    raise exception 'GENIE_ACCESS_FAIL: active member undo missing lead';
+  end if;
+  raise notice '%: not_found', cell;
+
+  -- The successful RPC set a transaction-local flag. Clear it before testing
+  -- whether an ordinary UPDATE can reset a result in this same DO statement.
+  perform pg_catalog.set_config('genie.contact_undo', 'off', true);
+  cell := 'active member first UPDATE after undo reopens window';
+  execute 'update public.customer_leads set contact_result = ''site_visit''
+           where id::text = $1
+           returning contact_result_at, contact_first_at, contact_undo_until'
+    into result_at, first_at, undo_until using lead_id;
+  if not found or result_at is null or first_at is distinct from result_at
+     or undo_until is distinct from result_at + interval '15 minutes' then
+    raise exception 'GENIE_ACCESS_FAIL: active member first UPDATE after undo reopens window';
+  end if;
+  raise notice '%: new 15-minute window', cell;
+
+  cell := 'postgres expire undo window';
+  execute 'reset role';
+  execute 'set local role postgres';
+  -- The trigger deliberately restores time columns when the result is the
+  -- same. Disable this user trigger only while arranging the expired fixture.
+  execute 'alter table public.customer_leads disable trigger genie_contact_timestamps';
+  execute 'update public.customer_leads
+              set contact_undo_until = pg_catalog.now() - interval ''1 minute''
+            where id::text = $1' using lead_id;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'GENIE_ACCESS_FAIL: postgres expire undo window'; end if;
+  execute 'alter table public.customer_leads enable trigger genie_contact_timestamps';
+  execute 'set local role authenticated';
+  cell := 'active member undo expired by time';
+  execute 'select public.genie_undo_contact_result($1::uuid, $2, $3)'
+    into undo_result using lead_id, 'site_visit', result_at;
+  if undo_result is distinct from 'expired' then
+    raise exception 'GENIE_ACCESS_FAIL: active member undo expired by time';
+  end if;
+  raise notice '%: expired', cell;
+
   perform pg_catalog.pg_sleep(0.01);
   cell := 'active member second UPDATE preserves first timestamp';
-  execute 'update public.customer_leads set contact_result = ''site_visit''
-           where id::text = $1 returning contact_result_at, contact_first_at'
-    into next_result_at, saved_first_at using lead_id;
+  execute 'update public.customer_leads set contact_result = ''contacted''
+           where id::text = $1
+           returning contact_result_at, contact_first_at, contact_undo_until'
+    into next_result_at, saved_first_at, saved_undo_until using lead_id;
   if not found or saved_first_at is distinct from first_at
-     or next_result_at is null or next_result_at <= result_at then
+     or next_result_at is null or next_result_at <= result_at
+     or saved_undo_until is not null then
     raise exception 'GENIE_ACCESS_FAIL: active member second UPDATE preserves first timestamp';
   end if;
-  raise notice '%: first unchanged, result time advanced', cell;
+  raise notice '%: first unchanged, result time advanced, undo closed', cell;
+  cell := 'active member undo after result change';
+  execute 'select public.genie_undo_contact_result($1::uuid, $2, $3)'
+    into undo_result using lead_id, 'contacted', next_result_at;
+  if undo_result is distinct from 'expired' then
+    raise exception 'GENIE_ACCESS_FAIL: active member undo after result change';
+  end if;
+  raise notice '%: expired', cell;
+  cell := 'active member undo wrong expected result';
+  execute 'select public.genie_undo_contact_result($1::uuid, $2, $3)'
+    into undo_result using lead_id, 'site_visit', next_result_at;
+  if undo_result is distinct from 'changed' then
+    raise exception 'GENIE_ACCESS_FAIL: active member undo wrong expected result';
+  end if;
+  raise notice '%: changed', cell;
+  cell := 'active member undo wrong expected time';
+  execute 'select public.genie_undo_contact_result($1::uuid, $2, $3)'
+    into undo_result using lead_id, 'contacted', result_at;
+  if undo_result is distinct from 'changed' then
+    raise exception 'GENIE_ACCESS_FAIL: active member undo wrong expected time';
+  end if;
+  raise notice '%: changed', cell;
   cell := 'active member reset contact_result to NULL';
   begin
     execute 'update public.customer_leads set contact_result = null where id::text = $1'
@@ -280,15 +406,30 @@ begin
               set contact_result = ''unreachable'', contact_result_at = $3
             where id::text = $1 and outcome_token_hash = $2
               and outcome_token_expires_at > $3
-            returning contact_result_at, contact_first_at'
-    into result_at, first_at
+            returning contact_result_at, contact_first_at, contact_undo_until'
+    into result_at, first_at, undo_until
     using lead_id, 'genie-access-verify', pg_catalog.clock_timestamp();
-  if not found or result_at is null or first_at is null then
+  if not found or result_at is null or first_at is distinct from saved_first_at
+     or undo_until is not null then
     raise exception 'GENIE_ACCESS_FAIL: service_role recordContactResult first UPDATE';
   end if;
   service_result_at := result_at;
   service_first_at := first_at;
+  service_undo_until := undo_until;
   raise notice '%: 1 row', cell;
+  cell := 'service_role same-result replay preserves all times';
+  execute 'update public.customer_leads
+              set contact_result = ''unreachable'', contact_result_at = $2
+            where id::text = $1
+            returning contact_result_at, contact_first_at, contact_undo_until'
+    into result_at, first_at, undo_until
+    using lead_id, pg_catalog.clock_timestamp();
+  if not found or result_at is distinct from service_result_at
+     or first_at is distinct from service_first_at
+     or undo_until is distinct from service_undo_until then
+    raise exception 'GENIE_ACCESS_FAIL: service_role same-result replay preserves all times';
+  end if;
+  raise notice '%: all three times unchanged', cell;
   cell := 'service_role recordContactResult guarded second UPDATE';
   execute 'update public.customer_leads set contact_first_at = $3
             where id::text = $1 and outcome_token_hash = $2
@@ -317,11 +458,12 @@ begin
                   phone = ''0900000001'', notification_status = ''pending''
             where id::text = $1 and messenger_user_id = $2
               and answers = $4 and notification_status <> ''not_required''
-            returning contact_result_at, contact_first_at'
-    into result_at, first_at
+            returning contact_result_at, contact_first_at, contact_undo_until'
+    into result_at, first_at, undo_until
     using lead_id, sender_id, updated_answers, old_answers;
   if not found or result_at is distinct from service_result_at
-     or first_at is distinct from service_first_at then
+     or first_at is distinct from service_first_at
+     or undo_until is distinct from service_undo_until then
     raise exception 'GENIE_ACCESS_FAIL: service_role updateCustomerLead timestamps';
   end if;
   execute 'select phone, notification_status, answers

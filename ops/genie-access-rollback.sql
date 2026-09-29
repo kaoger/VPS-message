@@ -19,3 +19,33 @@ grant update (contact_result, contact_result_at, contact_first_at)
   on table public.customer_leads to authenticated;
 
 commit;
+
+-- Optional v5.1-only rollback (do not run the minimal rollback above for this).
+-- Copy the following block without the leading "-- " into SQL Editor. It drops
+-- the undo RPC and restores the original genie-access.sql trigger behavior.
+-- Keep contact_undo_until and its SELECT grant so existing data remains intact.
+-- begin;
+-- drop function if exists public.genie_undo_contact_result(uuid, text, timestamptz);
+-- create or replace function public.genie_set_contact_timestamps()
+-- returns trigger
+-- language plpgsql
+-- security invoker
+-- set search_path = ''
+-- as $function$
+-- declare
+--   changed_at timestamptz;
+-- begin
+--   if old.contact_result is not null and new.contact_result is null then
+--     raise exception 'contact_result cannot be reset to null'
+--       using errcode = '23514';
+--   end if;
+--   if new.contact_result is distinct from old.contact_result then
+--     changed_at := pg_catalog.clock_timestamp();
+--     new.contact_result_at := changed_at;
+--     new.contact_first_at := coalesce(old.contact_first_at, changed_at);
+--   end if;
+--   return new;
+-- end;
+-- $function$;
+-- notify pgrst, 'reload schema';
+-- commit;
