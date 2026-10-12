@@ -2,7 +2,7 @@ import express from "express";
 import { adminConfig, ADMIN_SCOPES, GRAPH_VERSION } from "./admin-config.js";
 import { adminGraph, AdminGraphError } from "./admin-graph.js";
 import { adminStore, randomId, signedId, cookieId, equalToken } from "./admin-store.js";
-import { adminPage, adminNav, csrfField, hidden } from "./admin-page.js";
+import { adminPage, csrfField, hidden } from "./admin-page.js";
 import { logEvent } from "./log-event.js";
 
 const SESSION_COOKIE = "sanhe_admin_session", STATE_COOKIE = "sanhe_admin_state";
@@ -18,13 +18,15 @@ export function createAdmin({ env = process.env, store = adminStore(), fetchImpl
   function render(req, res, title, body) {
     const config = req.adminConfig;
     const session = req.adminSession;
-    return adminPage(res, { title, body, referrerPolicy: req.path === "/callback" ? "no-referrer" : "same-origin",
+    const currentStep = ["/pages", "/page"].includes(req.path) ? 2 : req.path === "/subscription" ? 3
+      : ["/recipients", "/send"].includes(req.path) ? 4 : 1;
+    return adminPage(res, { title, body, session, currentStep, referrerPolicy: req.path === "/callback" ? "no-referrer" : "same-origin",
       secrets: [config?.appSecret, config?.sessionSecret,
       session?.userToken, session?.availablePage?.token, session?.page?.token] });
   }
   const notice = (req, res, status, text) => {
     res.status(status);
-    return render(req, res, "Sanhe Messenger Admin", e => `<p class="notice">${e(text)}</p><p><a href="/admin">Return to admin</a></p>`);
+    return render(req, res, "Sanhe Messenger Admin", e => `<p class="notice warning" role="alert">${e(text)}</p><p><a href="/admin">Return to admin</a></p>`);
   };
   function clearSession(req, res) {
     store.removeSession(req.adminSessionId);
@@ -50,7 +52,7 @@ export function createAdmin({ env = process.env, store = adminStore(), fetchImpl
     const page = rows.find(row => row?.id === config.pageId);
     const availablePage = page && Array.isArray(page.tasks) && page.tasks.includes("MESSAGING") && scalar(page.access_token, 8192)
       ? { ...asset(page), token: page.access_token } : null;
-    return { pages: rows.map(asset).filter(Boolean), availablePage };
+    return { otherPageCount: rows.filter(row => row?.id !== config.pageId && asset(row)).length, availablePage };
   }
   async function refreshWriteAuthorization(req, res) {
     const session = req.adminSession;
@@ -59,12 +61,13 @@ export function createAdmin({ env = process.env, store = adminStore(), fetchImpl
       const grants = await req.adminGraph.list("me/permissions", session.userToken, "permission,status");
       if (!accounts.availablePage || !ADMIN_SCOPES.every(permission =>
         grants.some(grant => grant?.permission === permission && grant.status === "granted"))) throw new AdminGraphError();
-      if (!activeSession(req, res)) { session.page = null; session.availablePage = null; return false; }
+      if (!activeSession(req, res)) { session.page = null; session.availablePage = null; session.subscriptionConfirmed = false; return false; }
       Object.assign(session, accounts, { page: accounts.availablePage });
       return true;
     } catch (error) {
       session.page = null;
       session.availablePage = null;
+      session.subscriptionConfirmed = false;
       const code = error instanceof AdminGraphError ? error.code : null;
       if (code === 190) clearSession(req, res);
       logEvent("admin_write_authorization_failed", ...(code === null ? [] : [code]));
@@ -122,8 +125,8 @@ export function createAdmin({ env = process.env, store = adminStore(), fetchImpl
   });
 
   router.get("/", (req, res) => render(req, res, "Sanhe Messenger Admin", e => req.adminSession
-    ? `${adminNav(e, req.adminSession)}<p>Use the four steps to inspect business assets, select our Page, confirm its webhook subscription and reply to a recent customer.</p>`
-    : `<p>Sign in to manage our Page and reply to customers who messaged us within the last 24 hours.</p><a class="button" href="/admin/login">Continue with Facebook</a><p>Facebook Login for Business · Authorized administrators only</p>`));
+    ? `<div class="notice"><span class="notice-title">Manage our Messenger Page</span><p>Use the four steps to inspect business assets, select our Page, confirm its webhook subscription and reply to a recent customer.</p></div><p class="next"><a class="button" href="/admin/businesses">Start with Step 1 Business</a></p>`
+    : `<div class="notice"><span class="notice-title">Manage our Messenger Page</span><p>Sign in to manage our Page and reply to customers who messaged us within the last 24 hours. Facebook Login for Business requests business_management, pages_show_list, pages_manage_metadata and pages_messaging for the four steps below.</p></div><a class="button" href="/admin/login" title="Sign in with Facebook Login for Business" aria-describedby="login-help">Continue with Facebook</a><p class="hint" id="login-help">Sign in with Facebook and authorize access to our business and Page.</p><p class="muted next">Facebook Login for Business · Authorized administrators only</p>`));
 
   router.get("/login", (req, res) => {
     if (!store.rate(`login:${req.ip}`)) return notice(req, res, 429, "Too many login attempts. Try again in one minute.");
@@ -181,35 +184,41 @@ export function createAdmin({ env = process.env, store = adminStore(), fetchImpl
 
   router.get("/businesses", async (req, res) => {
     const config = req.adminConfig, session = req.adminSession;
-    const businesses = (await req.adminGraph.list("me/businesses", session.userToken, "id,name")).map(asset).filter(Boolean)
+    const candidates = (await req.adminGraph.list("me/businesses", session.userToken, "id,name")).map(asset).filter(Boolean)
       .filter(row => !config.businessId || row.id === config.businessId);
+    const businesses = [];
+    for (const business of candidates) {
+      const pages = (await req.adminGraph.list(`${business.id}/owned_pages`, session.userToken, "id,name")).map(asset).filter(Boolean);
+      const page = pages.find(row => row.id === config.pageId);
+      if (page) businesses.push({ ...business, page, otherPageCount: pages.filter(row => row.id !== config.pageId).length });
+    }
     const selected = scalar(req.query.business, 100);
     if (selected && !businesses.some(row => row.id === selected)) return notice(req, res, 403, "Unsupported business portfolio.");
-    const owned = selected ? (await req.adminGraph.list(`${selected}/owned_pages`, session.userToken, "id,name")).map(asset).filter(Boolean) : null;
-    return render(req, res, "Step 1 Business", e => `${adminNav(e, session)}<p>business_management: business portfolios available to the signed-in administrator.</p>
-      ${businesses.length ? `<ul>${businesses.map(row => `<li><a href="/admin/businesses?business=${e(row.id)}">${e(row.name)}</a> · ${e(row.id)}</li>`).join("")}</ul>` : "<p>No supported business portfolios were returned.</p>"}
-      ${owned ? `<h2>Owned Pages</h2><ul>${owned.map(row => `<li>${e(row.name)} · ${e(row.id)}${row.id === config.pageId ? " · Supported Page" : " · Not supported"}</li>`).join("")}</ul>` : "<p>Select a business to view its owned Pages.</p>"}
-      <p><a href="/admin/pages">Continue to Step 2 Page</a></p>`);
+    return render(req, res, "Step 1 Business", e => `<div class="notice"><span class="notice-title">Find our business portfolio</span><p>This step uses business_management to list the business portfolio that owns our Page. Only portfolios that own the supported Sanhe Page are shown, with their owned Pages below.</p></div>
+      ${businesses.length ? businesses.map(row => `<section aria-label="Business portfolio"><h2>${e(row.name)}</h2><p class="asset-id">Business ID: ${e(row.id)}</p><h3>Owned Pages</h3><p class="asset-name">${e(row.page.name)}</p><p class="asset-id">Page ID: ${e(row.page.id)}</p><span class="badge">Supported Page</span>${row.otherPageCount ? `<p class="muted next">Other Pages: ${e(row.otherPageCount)} (not supported)</p>` : ""}</section>`).join("") : '<p class="notice warning" role="status">No supported business portfolios were returned.</p>'}
+      <p class="next"><a class="button" href="/admin/pages">Continue to Step 2 Page</a></p>`);
   });
 
   router.get("/pages", async (req, res) => {
     const session = req.adminSession;
     const accounts = await account(req.adminGraph, req.adminConfig, session.userToken);
     Object.assign(session, accounts);
-    if (!accounts.availablePage) { session.page = null; return notice(req, res, 403, "Page access or the MESSAGING task is missing. Sign in again."); }
-    return render(req, res, "Step 2 Select Page", e => `${adminNav(e, session)}<p>pages_show_list: Pages managed by the signed-in administrator. Only our Page is supported.</p>
-      <ul>${session.pages.map(row => `<li>${e(row.name)} · ${e(row.id)}${row.id === req.adminConfig.pageId ? " · MESSAGING task verified" : " · Not supported"}</li>`).join("")}</ul>
-      <form method="post" action="/admin/page">${csrfField(e, session)}<label><input type="radio" name="page" value="${e(req.adminConfig.pageId)}" required> ${e(session.availablePage.name)} · ${e(req.adminConfig.pageId)}</label><button>Select Page</button></form>`);
+    if (!accounts.availablePage) { session.page = null; session.subscriptionConfirmed = false; return notice(req, res, 403, "Page access or the MESSAGING task is missing. Sign in again."); }
+    return render(req, res, "Step 2 Select Page", e => `<div class="notice"><span class="notice-title">Choose the Page to manage</span><p>This step uses pages_show_list to find the Pages managed by the signed-in administrator and verify the MESSAGING task. Only our Sanhe Page can be selected.</p></div>
+      <section><p class="asset-name">${e(session.availablePage.name)}</p><p class="asset-id">Page ID: ${e(req.adminConfig.pageId)}</p><span class="badge">Supported Page</span><p class="muted hint">MESSAGING task verified</p>${session.otherPageCount ? `<p class="muted next">Other Pages: ${e(session.otherPageCount)} (not supported)</p>` : ""}</section>
+      <form method="post" action="/admin/page">${csrfField(e, session)}<label class="page-choice"><input type="radio" name="page" value="${e(req.adminConfig.pageId)}" required${session.page ? " checked" : ""}> ${e(session.availablePage.name)}</label><button title="Use the supported Page for webhook setup and replies" aria-describedby="page-help">Select Page</button><p class="hint" id="page-help">Use this Page for webhook setup and customer replies, then continue to Step 3.</p></form>`);
   });
 
   router.post("/page", async (req, res) => {
     const session = req.adminSession;
     if (req.body?.page !== req.adminConfig.pageId) return notice(req, res, 403, "Unsupported Page.");
     const accounts = await account(req.adminGraph, req.adminConfig, session.userToken);
-    if (!accounts.availablePage) { session.page = null; return notice(req, res, 403, "Page access or the MESSAGING task is missing."); }
+    if (!accounts.availablePage) { session.page = null; session.subscriptionConfirmed = false; return notice(req, res, 403, "Page access or the MESSAGING task is missing."); }
     await checkBusiness(req.adminGraph, req.adminConfig, session.userToken);
     if (!activeSession(req, res)) return;
     session.page = accounts.availablePage;
+    session.subscriptionConfirmed = false;
+    session.subscriptionNotice = "";
     Object.assign(session, accounts);
     logEvent("admin_page_selected");
     res.redirect(303, "/admin/subscription");
@@ -219,12 +228,15 @@ export function createAdmin({ env = process.env, store = adminStore(), fetchImpl
     if (!requirePage(req, res)) return;
     const session = req.adminSession, current = await subscription(req);
     const operation = issueOperation(session, "subscription");
-    return render(req, res, "Step 3 Webhook", e => `${adminNav(e, session)}<p>pages_manage_metadata: subscription for ${e(session.page.name)} · ${e(session.page.id)}.</p>
-      ${session.subscriptionNotice ? `<p class="notice">${e(session.subscriptionNotice)}</p>` : ""}
-      <p>App ${e(req.adminConfig.appId)}: <strong>${current.subscribed ? "Subscribed" : "Not subscribed"}</strong></p><p>Subscribed fields: ${e(current.fields.join(", ") || "None")}</p>
-      <p>Confirm subscription reads the current fields, adds messages and messaging_postbacks, then verifies the result. Existing fields are retained. Coordinate with other administrators to avoid concurrent changes.</p>
-      <form method="post" action="/admin/subscription">${csrfField(e, session)}${hidden(e, "operation", operation)}<button>Confirm subscription</button></form>
-      <p><a href="/admin/recipients">Continue to Step 4 Send</a></p>`);
+    if (!current.subscribed || !["messages", "messaging_postbacks"].every(field => current.fields.includes(field))) {
+      if (session.subscriptionConfirmed) session.subscriptionNotice = "Warning: required webhook fields are no longer confirmed. Check the Page settings before recording.";
+      session.subscriptionConfirmed = false;
+    }
+    return render(req, res, "Step 3 Webhook", e => `<div class="notice"><span class="notice-title">Connect Messenger events</span><p>This step uses pages_manage_metadata to confirm the app's webhook subscription for our Page, so incoming messages and button actions can reach the bot.</p></div>
+      ${session.subscriptionNotice ? `<p class="notice ${session.subscriptionConfirmed ? "success" : "warning"}" role="status">${e(session.subscriptionNotice)}</p>` : ""}
+      <section><h2>${e(session.page.name)}</h2><p class="asset-id">Page ID: ${e(session.page.id)}</p><p>App ${e(req.adminConfig.appId)}: <strong>${current.subscribed ? "Subscribed" : "Not subscribed"}</strong></p><p>Subscribed fields: ${e(current.fields.join(", ") || "None")}</p><p class="muted">Coordinate with other administrators to avoid concurrent changes.</p></section>
+      <form method="post" action="/admin/subscription">${csrfField(e, session)}${hidden(e, "operation", operation)}<button title="Add required Messenger webhook fields and verify the subscription" aria-describedby="subscription-help">Confirm subscription</button><p class="hint" id="subscription-help">Read current fields, add messages and messaging_postbacks, then verify the result. Existing fields are retained.</p></form>
+      <p class="next"><a href="/admin/recipients">Continue to Step 4 Send →</a></p>`);
   });
 
   router.post("/subscription", async (req, res) => {
@@ -233,6 +245,8 @@ export function createAdmin({ env = process.env, store = adminStore(), fetchImpl
     if (!consumeOperation(session, req.body?.operation, "subscription")) return notice(req, res, 409, "This operation has already been used or expired.");
     if (subscriptionBusy) return notice(req, res, 409, "A subscription confirmation is already in progress.");
     subscriptionBusy = true;
+    session.subscriptionConfirmed = false;
+    session.subscriptionNotice = "";
     try {
       if (!await refreshWriteAuthorization(req, res)) return;
       const before = await subscription(req);
@@ -241,9 +255,9 @@ export function createAdmin({ env = process.env, store = adminStore(), fetchImpl
       const result = await req.adminGraph.postForm(`${session.page.id}/subscribed_apps`, session.page.token, { subscribed_fields: fields.join(",") });
       if (result.success !== true) throw new AdminGraphError(null, true);
       const after = await subscription(req);
-      session.subscriptionNotice = after.subscribed && new Set(after.fields).size === fields.length &&
-        fields.every(field => after.fields.includes(field))
-        ? "Subscription confirmed. All previous fields and required fields are present."
+      session.subscriptionConfirmed = after.subscribed && new Set(after.fields).size === fields.length &&
+        fields.every(field => after.fields.includes(field));
+      session.subscriptionNotice = session.subscriptionConfirmed ? "Subscription confirmed. All previous fields and required fields are present."
         : "Warning: subscription verification did not match. Check the Page settings before recording.";
       logEvent("admin_subscription_checked");
       res.redirect(303, "/admin/subscription");
@@ -261,13 +275,13 @@ export function createAdmin({ env = process.env, store = adminStore(), fetchImpl
       return { code, label: `Customer ${i + 1}`, time: new Date(row.lastInboundAt).toISOString(), eligible: store.canReply(row) };
     });
     const operation = issueOperation(session, "send");
-    return render(req, res, "Step 4 Send", e => `${adminNav(e, session)}<p>pages_messaging: reply from ${e(session.page.name)} · ${e(session.page.id)}.</p>
-      ${session.sendNotice ? `<p class="notice">${e(session.sendNotice)}</p>` : ""}
+    return render(req, res, "Step 4 Send", e => `<div class="notice"><span class="notice-title">Reply to a recent customer</span><p>This step uses pages_messaging to send a reply from ${e(session.page.name)} · ${e(session.page.id)}. Only customers who messaged the Page within the last 24 hours are eligible.</p></div>
+      ${session.sendNotice ? `<p class="notice ${session.sendAccepted ? "success" : "warning"}" role="status">${e(session.sendNotice)}</p>` : ""}
       <p>Only customer messages observed since this server started are listed. Names and message contents are not collected. Restarting clears the list. Customers must message the Page first.</p>
       ${recipients.length ? `<table><thead><tr><th>Customer</th><th>Last inbound (UTC)</th><th>Reply window</th></tr></thead><tbody>${recipients.map(row => `<tr><td>${e(row.label)}</td><td>${e(row.time)}</td><td>${row.eligible ? "Within 24 hours" : "Expired: reply disabled"}</td></tr>`).join("")}</tbody></table>
       <form method="post" action="/admin/send">${csrfField(e, session)}${hidden(e, "operation", operation)}
       <label>Recent customer <select name="recipient" required><option value="">Select customer</option>${recipients.map(row => `<option value="${e(row.code)}"${row.eligible ? "" : " disabled"}>${e(row.label)} · ${e(row.time)}${row.eligible ? "" : " · Expired"}</option>`).join("")}</select></label>
-      <label>Reply (maximum 2000 characters)<textarea name="text" maxlength="2000" required></textarea></label><button${recipients.some(row => row.eligible) ? "" : " disabled"}>Send</button></form>` : "<p>No recent customers. Ask the test customer to send a new message, then refresh this page.</p>"}
+      <label>Reply (maximum 2000 characters)<textarea name="text" maxlength="2000" required></textarea></label><button title="Send this reply from our Page to the selected customer" aria-describedby="send-help"${recipients.some(row => row.eligible) ? "" : " disabled"}>Send</button><p class="hint" id="send-help">Send one reply from our Page to the selected customer within the 24-hour window. Confirm receipt in Messenger.</p></form>` : '<p class="notice warning" role="status">No recent customers. Ask the test customer to send a new message, then refresh this page.</p>'}
       <p><a href="/admin/recipients">Refresh recent customers</a></p>`);
   });
 
@@ -290,11 +304,13 @@ export function createAdmin({ env = process.env, store = adminStore(), fetchImpl
         return notice(req, res, 400, "The 24-hour reply window has expired. Ask the customer to message the Page again.");
       }
       session.sendNotice = "Result unconfirmed. Check Messenger before preparing another reply. No automatic retry was made.";
+      session.sendAccepted = false;
       const result = await req.adminGraph.post(`${session.page.id}/messages`, session.page.token, {
         messaging_type: "RESPONSE", recipient: { id: psid }, message: { text },
       });
       if (!scalar(result.message_id, 512)) throw new AdminGraphError(null, true);
       session.sendNotice = `Meta accepted the reply. Message ID: ${result.message_id}. Time (UTC): ${new Date(store.now()).toISOString()}. Confirm receipt in Messenger.`;
+      session.sendAccepted = true;
       logEvent("admin_message_accepted");
       res.redirect(303, "/admin/recipients");
     } finally { session.sendBusy = false; }

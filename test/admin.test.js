@@ -58,7 +58,11 @@ async function fixture(t, { overrides = {}, timeoutMs = 1000, storeOptions = {} 
       { id: "999", name: "Other Page", tasks: ["MESSAGING"], access_token: "discard-this-token" },
       ] });
     }
-    if (path === "me/businesses") return Response.json({ data: [{ id: mode.business, name: "Test <Business>" }] });
+    if (path === "me/businesses") return Response.json({ data: mode.businesses || [{ id: mode.business, name: "Test <Business>" }] });
+    if (path.endsWith("/owned_pages") && mode.ownedPages?.[path]) {
+      const result = mode.ownedPages[path];
+      return Response.json(typeof result === "function" ? result(url) : { data: result });
+    }
     if (path === "404/owned_pages") return Response.json({ data: mode.owned ? [{ id: SANHE_PAGE_ID, name: "Owned <Page>" }] : [] });
     if (path === `${SANHE_PAGE_ID}/subscribed_apps`) {
       if (options.method === "POST") {
@@ -289,6 +293,160 @@ test("business restriction verifies membership and Page ownership; foreign busin
   f.mode.tasks = [];
   assert.equal((await f.post("/admin/page", { page: SANHE_PAGE_ID })).status, 403);
   assert.equal((await f.request("/admin/recipients")).status, 403);
+});
+
+test("businesses automatically show only Sanhe owners and count other Pages without their names or IDs", async t => {
+  const f = await fixture(t);
+  await f.login();
+  f.mode.businesses = [{ id: "404", name: '<b>Sanhe & Business</b>' },
+    { id: "777777", name: "Private foreign business" }, { id: "405", name: "Another Sanhe owner" },
+    { id: "invalid/path", name: "Invalid business" }];
+  f.mode.ownedPages = {
+    "404/owned_pages": [{ id: SANHE_PAGE_ID, name: '<img src=x onerror="alert(1)">' },
+      { id: "888888", name: "Private other Page" }, { id: "888889", name: "Another private Page" }],
+    "777777/owned_pages": [{ id: "999999", name: "Foreign owned Page" }],
+    "405/owned_pages": [{ id: SANHE_PAGE_ID, name: "Second supported Page" }],
+  };
+  const before = f.calls.length;
+  const response = await f.request("/admin/businesses");
+  assert.equal(response.status, 200);
+  assert.match(response.html, /&lt;b&gt;Sanhe &amp; Business&lt;\/b&gt;/);
+  assert.match(response.html, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;/);
+  assert.match(response.html, /Owned Pages.*Supported Page.*Other Pages: 2 \(not supported\)/s);
+  assert.match(response.html, /Another Sanhe owner.*Second supported Page/s);
+  assert.doesNotMatch(response.html, /Private foreign business|777777|Private other Page|888888|888889|Foreign owned Page|999999|Another private Page|Invalid business|<img|\?business=/);
+  assert.deepEqual(f.calls.slice(before).map(call => call.path), ["me/businesses", "404/owned_pages", "777777/owned_pages", "405/owned_pages"]);
+  assert.equal((await f.request("/admin/businesses?business=777777")).status, 403);
+});
+
+test("configured business wins over other Sanhe owners and still requires Page ownership", async t => {
+  const f = await fixture(t, { overrides: { ADMIN_ALLOWED_BUSINESS_ID: "404" } });
+  await f.login();
+  f.mode.businesses = [{ id: "404", name: "Configured Sanhe business" }, { id: "777777", name: "Hidden Sanhe owner" }];
+  const before = f.calls.length;
+  const response = await f.request("/admin/businesses");
+  assert.match(response.html, /Configured Sanhe business.*Owned &lt;Page&gt;/s);
+  assert.doesNotMatch(response.html, /Hidden Sanhe owner|777777/);
+  assert.deepEqual(f.calls.slice(before).map(call => call.path), ["me/businesses", "404/owned_pages"]);
+  f.mode.owned = false;
+  const empty = await f.request("/admin/businesses");
+  assert.match(empty.html, /No supported business portfolios/);
+  assert.doesNotMatch(empty.html, /Configured Sanhe business|Business ID: 404/);
+});
+
+test("ownership filtering includes later owned_pages results and fails closed on lookup failure", async t => {
+  const f = await fixture(t);
+  await f.login();
+  f.mode.ownedPages = { "404/owned_pages": url => url.searchParams.has("after")
+    ? { data: [{ id: SANHE_PAGE_ID, name: "Supported on second page" }] }
+    : { data: [{ id: "888888", name: "Private first page" }], paging: {
+      next: "https://do-not-follow.example.test", cursors: { after: "owned-next" } } } };
+  const response = await f.request("/admin/businesses");
+  assert.match(response.html, /Supported on second page.*Other Pages: 1/s);
+  assert.doesNotMatch(response.html, /Private first page|888888/);
+  const queries = f.calls.filter(call => call.path === "404/owned_pages");
+  assert.equal(queries.length, 2);
+  assert.equal(queries[1].url.searchParams.get("after"), "owned-next");
+  f.mode.errorPath = "404/owned_pages";
+  const failed = await f.request("/admin/businesses");
+  assert.equal(failed.status, 502);
+  assert.doesNotMatch(failed.html, /Test &lt;Business&gt;|Business ID: 404|Private first page|888888/);
+});
+
+test("Page selection exposes only supported assets and does not retain unrelated names", async t => {
+  const f = await fixture(t);
+  await f.login();
+  const response = await f.request("/admin/pages");
+  assert.match(response.html, /Sanhe &lt;Page&gt;/);
+  assert.match(response.html, /Other Pages: 1 \(not supported\)/);
+  assert.doesNotMatch(response.html, /Other Page<|>999<|Page ID: 999|discard-this-token/);
+  const session = f.store.session(f.jar.get("sanhe_admin_session").split(".")[0]);
+  assert.equal(session.pages, undefined);
+  assert.equal(session.otherPageCount, 1);
+});
+
+const progressSteps = html => [...html.matchAll(/<(?:a|span) class="step[^>]*>.*?<\/li>/gs)].map(match => match[0]);
+test("step progress follows login, Page selection and verified confirmation; GET alone never completes webhook", async t => {
+  const f = await fixture(t);
+  const home = await f.request("/admin");
+  assert.equal(progressSteps(home.html).length, 4);
+  assert.ok(progressSteps(home.html).every(step => !step.includes('class="step complete"')));
+  await f.login();
+  const business = progressSteps((await f.request("/admin/businesses")).html);
+  assert.match(business[0], /complete.*aria-current="step"/);
+  assert.doesNotMatch(business[1], /complete/);
+  await f.authorize();
+  let webhook = await f.request("/admin/subscription");
+  let steps = progressSteps(webhook.html);
+  assert.match(steps[1], /complete/);
+  assert.match(steps[2], /aria-current="step"/);
+  assert.doesNotMatch(steps[2], /complete/);
+  await f.post("/admin/subscription", { operation: input(webhook.html, "operation") });
+  webhook = await f.request("/admin/subscription");
+  assert.match(progressSteps(webhook.html)[2], /complete.*aria-current="step"/);
+  assert.match(webhook.html, /class="notice success" role="status">Subscription confirmed/);
+  const send = progressSteps((await f.request("/admin/recipients")).html);
+  assert.match(send[2], /complete/);
+  assert.match(send[3], /aria-current="step"/);
+  assert.doesNotMatch(send[3], /complete/);
+  f.mode.mismatch = true;
+  f.mode.fields = ["messages"];
+  await f.post("/admin/subscription", { operation: input(webhook.html, "operation") });
+  webhook = await f.request("/admin/subscription");
+  assert.match(webhook.html, /class="notice warning" role="status">Warning:/);
+  assert.doesNotMatch(progressSteps(webhook.html)[2], /complete/);
+});
+
+test("webhook progress resets on external removal, Page re-selection and failed confirmation", async t => {
+  const f = await fixture(t);
+  await f.authorize();
+  async function confirm() {
+    const page = await f.request("/admin/subscription");
+    await f.post("/admin/subscription", { operation: input(page.html, "operation") });
+    const confirmed = await f.request("/admin/subscription");
+    assert.match(progressSteps(confirmed.html)[2], /complete/);
+    return confirmed;
+  }
+  await confirm();
+  f.mode.subscribed = false;
+  const removed = await f.request("/admin/subscription");
+  assert.doesNotMatch(progressSteps(removed.html)[2], /complete/);
+  assert.match(removed.html, /class="notice warning".*no longer confirmed/);
+  await confirm();
+  await f.post("/admin/page", { page: SANHE_PAGE_ID });
+  assert.doesNotMatch(progressSteps((await f.request("/admin/subscription")).html)[2], /complete/);
+  const confirmed = await confirm();
+  f.mode.errorPath = `${SANHE_PAGE_ID}/subscribed_apps`;
+  assert.equal((await f.post("/admin/subscription", { operation: input(confirmed.html, "operation") })).status, 502);
+  f.mode.errorPath = "";
+  const failed = await f.request("/admin/subscription");
+  assert.doesNotMatch(progressSteps(failed.html)[2], /complete/);
+  assert.doesNotMatch(failed.html, /Subscription confirmed/);
+});
+
+test("all main controls have visible descriptions and tooltips while CSP permits only nonced CSS", async t => {
+  const f = await fixture(t);
+  const home = await f.request("/admin");
+  assert.match(home.html, /Continue with Facebook<\/a><p class="hint" id="login-help">/);
+  await f.authorize();
+  f.observe();
+  const pages = [["/admin/businesses", "business_management"], ["/admin/pages", "pages_show_list"],
+    ["/admin/subscription", "pages_manage_metadata"], ["/admin/recipients", "pages_messaging"]];
+  for (const [path, permission] of pages) {
+    const response = await f.request(path);
+    assert.match(response.html, /Sanhe Interior Design · Messenger Admin/);
+    assert.match(response.html, new RegExp(`This step uses ${permission}`));
+    assert.equal((response.html.match(/<[^>]+ aria-current="step"/g) || []).length, 1);
+    assert.match(response.html, /title="End this admin session" aria-describedby="logout-help">Log out<\/button><p class="hint" id="logout-help">/);
+    for (const match of response.html.matchAll(/<button[^>]+aria-describedby="([^"]+)"[^>]*>/g)) {
+      assert.match(match[0], /title="[^"]+"/);
+      assert.ok(response.html.includes(`<p class="hint" id="${match[1]}">`));
+    }
+    const nonce = response.html.match(/<style nonce="([a-f0-9]+)">/)[1];
+    assert.ok(response.headers.get("content-security-policy").includes(`style-src 'nonce-${nonce}'`));
+    assert.doesNotMatch(response.html, /<script|style=|<img|<link|on(?:click|load)=/);
+    assert.doesNotMatch(response.headers.get("content-security-policy"), /unsafe-inline|script-src/);
+  }
 });
 
 test("subscription reads are side-effect free; confirmation retains union, verifies, and prevents replay", async t => {
@@ -549,6 +707,7 @@ test("complete mock flow sends one RESPONSE using logged-in Page token, safe mes
   assert.equal(f.sends().length, 1);
   const result = await f.request("/admin/recipients");
   assert.match(result.html, /Meta accepted the reply.*m_fake-message-001.*Time \(UTC\)/s);
+  assert.match(result.html, /class="notice success" role="status">Meta accepted/);
   assert.doesNotMatch(result.html, /fake-user-token|fake-authorized-page-token|discard-this-token|unique-private-reply|unused-bot-token/);
   assert.doesNotMatch(f.logs.join("\n"), /101|606|fake-.*token|fake-app-secret|unique-private-reply|private inbound/);
   assert.ok(f.logs.every(line => /^admin_[a-z_]+(?: \d+)?$/.test(line)));
@@ -598,6 +757,8 @@ test("timeout is unconfirmed, no retries; replay stays blocked", async t => {
   const response = await f.post("/admin/send", { ...ready, text: "reply" });
   assert.equal(response.status, 502);
   assert.match(response.html, /Result unconfirmed.*No automatic retry/s);
+  assert.match(response.html, /class="notice warning" role="alert"/);
+  assert.match((await f.request("/admin/recipients")).html, /class="notice warning" role="status">Result unconfirmed/);
   assert.equal(f.sends()[0].options.signal.aborted, true);
   assert.equal((await f.post("/admin/send", { ...ready, text: "reply" })).status, 409);
   assert.equal(f.sends().length, 1);
