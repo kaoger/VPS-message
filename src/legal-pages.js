@@ -1,6 +1,6 @@
 // Public policy pages required by Meta App Review (privacy policy + data deletion instructions).
 export const BUSINESS_NAME = "三禾室內設計裝潢工程";
-export const POLICY_EFFECTIVE_DATE = "2026 年 9 月 26 日";
+export const POLICY_EFFECTIVE_DATE = "2026 年 10 月 12 日";
 
 function layout(title, body) {
   return `<!doctype html>
@@ -48,6 +48,7 @@ export function renderPrivacyPage() {
       <ul>
         <li><strong>Messenger 資料：</strong>您傳送給粉絲專頁的訊息，以及 Meta 提供的粉絲專頁專屬使用者編號（用於將表單摘要回傳到同一個對話）。</li>
         <li><strong>需求表單資料：</strong>服務類型、服務地區、預計坪數、預計開始時間、預算範圍、姓名、聯絡電話、方便聯絡的時段。</li>
+        <li><strong>管理員登入資料：</strong>授權管理員使用 Facebook Login for Business 時，我們取得此應用程式範圍的使用者編號、已同意的權限、可管理的企業與粉絲專頁名稱及編號、粉絲專頁訊息管理任務，以及短效的使用者與粉絲專頁授權權杖。客人使用 Messenger 與需求表單不需要登入管理頁。</li>
       </ul>
       <p>我們不會透過本服務取得您的 Facebook 密碼、好友名單或其他個人檔案內容。</p>
 
@@ -55,6 +56,7 @@ export function renderPrivacyPage() {
       <ul>
         <li>了解您的裝潢需求，並由專人與您聯繫、提供諮詢與報價、安排丈量或見面洽談。</li>
         <li>將您填寫的需求摘要回傳至 Messenger，方便您確認及修改。</li>
+        <li>核對管理員允許資格、顯示企業及粉絲專頁資產、確認 Webhook 訂閱，並讓授權管理員回覆最近 24 小時內主動私訊的客人。</li>
       </ul>
       <p>我們不會出售、出租或交換您的個人資料。</p>
 
@@ -64,6 +66,9 @@ export function renderPrivacyPage() {
         <li>需求表單資料儲存在我們使用的雲端資料庫服務（Supabase），網站主機位於我們租用的虛擬主機。上述服務僅為我們處理資料，不會自行使用您的資料。</li>
         <li>資料僅在提供服務及後續聯繫所需期間保存；您可隨時依第五點要求刪除。</li>
         <li>連線全程使用 HTTPS 加密，資料庫存取僅限我們的伺服器及授權人員。</li>
+        <li>管理員授權權杖、資產資料與登入工作階段（session）只放在伺服器記憶體，不寫入資料庫或日誌，也不傳送到前端。登入閒置 30 分鐘、最長 2 小時，或授權權杖提前失效時即結束；登出及服務重啟也會清除登入資料。不符合允許資格的授權權杖立即丟棄。</li>
+        <li>管理頁使用必要的安全 Cookie：登入驗證 Cookie 最長 5 分鐘且僅能使用一次；session Cookie 最長 2 小時，僅含簽章過的隨機識別碼，使用 HttpOnly、Secure、SameSite=Lax，範圍限定 /admin，不用於廣告或追蹤。</li>
+        <li>近期收件人清單僅在記憶體保存指定粉絲專頁編號、客人編號與最後來訊時間，容量最多 500 筆，最長保存 48 小時，較早可能因容量限制被移除；服務重啟即清空。畫面顯示代稱，不取得客人姓名、不保存來訊本文；超過 24 小時即停用管理頁回覆。管理員輸入的回覆僅為當次傳送至 Meta，不保存於本服務的資料庫或日誌；Messenger 對話由 Meta 保存。</li>
       </ul>
 
       <h2>四、LINE 官方帳號</h2>
@@ -130,5 +135,5 @@ export function renderDataDeletionPage() {
       </ul>
 
       <h2>移除應用程式權限</h2>
-      <p>本服務不需要您登入或授權任何 Facebook 應用程式。如果您曾授權，可在 Facebook「設定與隱私 → 設定 → 應用程式和網站」中移除。</p>`);
+      <p>客人使用 Messenger 與需求表單不需要登入或授權管理頁。已授權的管理員可登出管理頁以清除本服務記憶體中的 session 與授權資料；若要撤銷 Meta 上的應用程式或企業整合授權，請依 Facebook 的相關設定操作，並先確認對粉絲專頁整合的影響。</p>`);
 }

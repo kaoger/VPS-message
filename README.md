@@ -25,6 +25,8 @@ Session：記憶體、30 分鐘 TTL。
 
 正式模式需設定 `NODE_ENV=production`、固定 HTTPS 的 `PUBLIC_BASE_URL`、三項 Meta 設定，以及至少 32 字元的 `FORM_TOKEN_SECRET`，缺少時拒絕啟動。Supabase 優先讀取 `SUPABASE_SECRET_KEY`，亦支援舊的 `SUPABASE_SERVICE_ROLE_KEY`。
 
+管理頁 `/admin` 另外需要 `META_APP_ID`、`META_LOGIN_CONFIG_ID`（Login for Business 的 User access token／Pages configuration）、`ADMIN_FB_USER_IDS`（逗號分隔的 App 範圍使用者 ID）、至少 32 bytes 的獨立隨機 `ADMIN_SESSION_SECRET`、`ADMIN_ALLOWED_PAGE_ID=157645098246646`；共用既有 `META_APP_SECRET` 與 HTTPS `PUBLIC_BASE_URL`。`ADMIN_ALLOWED_BUSINESS_ID` 選填，設定後只允許該企業並驗證其擁有三禾 Page。新鍵缺少或格式錯誤僅讓管理頁回 503；登入者仍須具備 Page 的 MESSAGING 任務。session 與收件人資料只放記憶體，重啟清空；安全 Cookie 需要以 HTTPS 存取。所有私密設定只放主機環境，`.env.example` 的佔位值不可直接使用。
+
 Lead 評分規則預設讀取專案內的 `config/lead-scoring.json`，目前是空規則，不寫入評分欄位。`compose.bot.yaml` 已設定 `LEAD_SCORING_PATH` 指向唯讀掛載的規則檔；修改主機上的 `config/lead-scoring.json` 即生效，每次新增或修改案件都會重新讀取，不需重啟。**填入非空規則之前**，必須先由管理者執行 `ops/lead-scoring.sql` 加入三個欄位。
 
 - Health: `GET /health`（含 `supabaseConfigured`）
