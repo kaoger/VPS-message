@@ -210,7 +210,7 @@ export function renderDonePage({ summary, messengerOk, heading, editUrl, newForm
       <pre>${escapeHtml(summary)}</pre>
       ${editUrl || newFormUrl ? `<div class="actions">
         ${editUrl ? `<a class="button button-primary" href="${escapeHtml(editUrl)}">修改需求</a>` : ""}
-        ${newFormUrl ? `<a id="new-form-link" href="${escapeHtml(newFormUrl)}" class="button button-secondary">重新填寫（新增一筆）</a>` : ""}
+        ${newFormUrl ? `<a id="new-form-link" href="${escapeHtml(newFormUrl)}" class="button button-secondary">新增新案件</a>` : ""}
       </div>` : ""}
       ${editUrl ? `<p class="note">修改連結兩小時內有效，請勿轉傳。過期後請在 Messenger 傳「修改需求」。</p>` : ""}
       ${returnNotice ? `<p class="note" id="messenger-return-notice">${escapeHtml(returnNotice)}</p>` : ""}

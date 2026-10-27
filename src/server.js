@@ -163,7 +163,7 @@ app.post("/form/submit", formRateLimit(), async (req, res) => {
   if (!submissions.claim(token, exp * 1000)) {
     return res.status(409).type("html").send(renderDonePage({
       heading: "這份表單已送出或正在處理",
-      summary: "若要測試另一筆或新增案件，請按下方「重新填寫（新增一筆）」。若要修改原資料，請回 Messenger 使用「修改需求」。",
+      summary: "若要再新增一筆案件，請按下方「新增新案件」。若要修改原資料，請回 Messenger 使用「修改需求」。",
       messengerOk: false,
       newFormUrl: newFormUrlFor(psid),
     }));

@@ -216,7 +216,7 @@ test("concurrent duplicate submission produces exactly one insert and message", 
   const nextResult = await submit(nextToken);
   assert.equal(nextResult.status, 200);
   const doneHtml = await nextResult.text();
-  assert.match(doneHtml, /重新填寫（新增一筆）/);
+  assert.match(doneHtml, /新增新案件/);
   assert.doesNotMatch(doneHtml, /messenger-return-notice|已完成，請回到 Messenger/);
   assert.equal((await submit(nextToken)).status, 409);
   assert.deepEqual([sends - previous[0], inserts - previous[1]], [6, 2]);
