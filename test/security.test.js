@@ -140,17 +140,18 @@ test("form renders shared questions and escapes customer-supplied values", async
   }
   assert.throws(() => signFormToken("prefill-test", 7200, null, "未核准服務"));
 });
-test("completion page asks users to return to Messenger and gates auto-return on success", () => {
+test("completion page shows return notice only on failure and gates auto-return on success", () => {
   const manual = renderDonePage({ summary: "送出摘要", messengerOk: true, heading: "需求已送出" });
-  assert.match(manual, /請回到 Messenger 對話查看摘要與官方 LINE 邀請/);
+  assert.doesNotMatch(manual, /messenger-return-notice|已完成，請回到 Messenger/);
   assert.doesNotMatch(manual, /MessengerExtensionsSDK|requestCloseBrowser/);
 
   const automatic = renderDonePage({ summary: "送出摘要", messengerOk: true, heading: "需求已送出", autoReturnToMessenger: true });
-  assert.match(automatic, /即將返回對話/);
+  assert.doesNotMatch(automatic, /messenger-return-notice|即將返回對話/);
   assert.match(automatic, /requestCloseBrowser/);
   assert.match(automatic, /messenger\.Extensions\.js/);
 
   const failedMessage = renderDonePage({ summary: "送出摘要", messengerOk: false, autoReturnToMessenger: true });
+  assert.match(failedMessage, /請回到 Messenger 對話查看處理結果；若沒有自動返回，請手動切回 Messenger。/);
   assert.doesNotMatch(failedMessage, /MessengerExtensionsSDK|requestCloseBrowser/);
 });
 test("Messenger webview button flag is opt-in", async () => {
@@ -216,7 +217,7 @@ test("concurrent duplicate submission produces exactly one insert and message", 
   assert.equal(nextResult.status, 200);
   const doneHtml = await nextResult.text();
   assert.match(doneHtml, /重新填寫（新增一筆）/);
-  assert.match(doneHtml, /請回到 Messenger 對話查看摘要與官方 LINE 邀請/);
+  assert.doesNotMatch(doneHtml, /messenger-return-notice|已完成，請回到 Messenger/);
   assert.equal((await submit(nextToken)).status, 409);
   assert.deepEqual([sends - previous[0], inserts - previous[1]], [6, 2]);
 });

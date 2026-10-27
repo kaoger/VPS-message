@@ -163,9 +163,7 @@ export function renderFormPage({ token, error = "", prefill = {}, editing = fals
 export function renderDonePage({ summary, messengerOk, heading, editUrl, newFormUrl, autoReturnToMessenger = false }) {
   const shouldAutoReturn = autoReturnToMessenger && messengerOk;
   const returnNotice = messengerOk
-    ? shouldAutoReturn
-      ? "已完成，Messenger 對話已收到摘要；即將返回對話。若沒有自動返回，請手動切回 Messenger。"
-      : "已完成，請回到 Messenger 對話查看摘要與官方 LINE 邀請。"
+    ? ""
     : "請回到 Messenger 對話查看處理結果；若沒有自動返回，請手動切回 Messenger。";
   const autoReturnScript = shouldAutoReturn ? `<script>
     window.extAsyncInit = function () {
@@ -199,6 +197,10 @@ export function renderDonePage({ summary, messengerOk, heading, editUrl, newForm
     h1{font-size:1.2rem;margin:0 0 8px;color:#0a7a3e}
     pre{white-space:pre-wrap;background:#f7f8fa;padding:12px;border-radius:12px;font-size:.92rem}
     .note{color:#667;font-size:.9rem;margin-top:12px}
+    .actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px}
+    .button{display:inline-block;padding:12px 16px;border:1px solid #1877f2;border-radius:12px;text-decoration:none;text-align:center}
+    .button-primary{background:#1877f2;color:#fff}
+    .button-secondary{background:#fff;color:#1877f2}
   </style>
 </head>
 <body>
@@ -206,9 +208,12 @@ export function renderDonePage({ summary, messengerOk, heading, editUrl, newForm
     <div class="card">
       <h1>${escapeHtml(heading || (messengerOk ? "已送出，摘要已發到 Messenger" : "請查看下方處理結果"))}</h1>
       <pre>${escapeHtml(summary)}</pre>
-      ${editUrl ? `<p><a href="${escapeHtml(editUrl)}">修改需求</a></p><p class="note">修改連結兩小時內有效，請勿轉傳。過期後請在 Messenger 傳「修改需求」。</p>` : ""}
-      ${newFormUrl ? `<p><a id="new-form-link" href="${escapeHtml(newFormUrl)}" style="display:inline-block;padding:12px 16px;background:#1877f2;color:#fff;border-radius:12px;text-decoration:none">重新填寫（新增一筆）</a></p><p class="note">會開啟空白表單，填完送出才新增一筆需求，不會覆蓋原資料。</p>` : ""}
-      <p class="note" id="messenger-return-notice">${returnNotice}</p>
+      ${editUrl || newFormUrl ? `<div class="actions">
+        ${editUrl ? `<a class="button button-primary" href="${escapeHtml(editUrl)}">修改需求</a>` : ""}
+        ${newFormUrl ? `<a id="new-form-link" href="${escapeHtml(newFormUrl)}" class="button button-secondary">重新填寫（新增一筆）</a>` : ""}
+      </div>` : ""}
+      ${editUrl ? `<p class="note">修改連結兩小時內有效，請勿轉傳。過期後請在 Messenger 傳「修改需求」。</p>` : ""}
+      ${returnNotice ? `<p class="note" id="messenger-return-notice">${escapeHtml(returnNotice)}</p>` : ""}
     </div>
   </div>
   ${autoReturnScript}
