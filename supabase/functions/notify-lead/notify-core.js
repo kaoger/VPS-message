@@ -1,6 +1,52 @@
 const defaultDelays = [0, 150, 400, 900, 1600]
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+export function parseNotificationEmails(value) {
+  if (typeof value !== 'string') return []
+  const emails = value.split(/[,;]/)
+    .map((email) => email.trim().toLowerCase())
+    .filter((email) => /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(email))
+  return [...new Set(emails)]
+}
+
+export async function sendNotificationEmails({ recipients, apiKey, from, subject, html }, {
+  fetchImpl = fetch,
+  logError = (...args) => console.error(...args),
+} = {}) {
+  if (!apiKey || !recipients.length) {
+    throw new Error('Missing RESEND_API_KEY or NOTIFICATION_EMAIL')
+  }
+
+  const sentEmails = []
+  let primaryFailed = false
+  for (const [index, email] of recipients.entries()) {
+    let response
+    try {
+      response = await fetchImpl('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer ' + apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ from, to: [email], subject, html }),
+      })
+    } catch { /* no HTTP response: log status 0 without exposing request details */ }
+
+    if (response?.ok) {
+      sentEmails.push(email)
+    } else if (index === 0) {
+      primaryFailed = true
+      logError('Resend error status:', response?.status ?? 0)
+    } else {
+      logError('secondary_recipient_failed', response?.status ?? 0)
+    }
+  }
+
+  // Attempt every recipient, but retain the primary recipient's failure semantics.
+  if (primaryFailed) throw new Error('Resend request failed')
+  return sentEmails
+}
+
 export async function createOutcomeToken() {
   const bytes = crypto.getRandomValues(new Uint8Array(32))
   const token = btoa(String.fromCharCode(...bytes))

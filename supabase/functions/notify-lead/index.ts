@@ -1,6 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { buildSubject, buildScoreBlockHtml, buildKeyFieldsHtml, buildOutcomeLinksHtml, escapeHtml, display, parseOutcomeBaseUrl } from './format.js'
-import { claimLead, markNotification, createOutcomeToken } from './notify-core.js'
+import { claimLead, markNotification, createOutcomeToken, parseNotificationEmails, sendNotificationEmails } from './notify-core.js'
 
 type LeadRecord = {
   id: string
@@ -32,7 +32,7 @@ const supabaseAdmin = createClient(
 )
 
 const resendApiKey = Deno.env.get('RESEND_API_KEY')
-const notificationEmail = Deno.env.get('NOTIFICATION_EMAIL')
+const notificationEmails = parseNotificationEmails(Deno.env.get('NOTIFICATION_EMAIL'))
 const emailFrom = Deno.env.get('EMAIL_FROM') || (() => { throw new Error('Missing EMAIL_FROM') })()
 const webhookSecret = Deno.env.get('WEBHOOK_SECRET')
 const configuredOutcomeBaseUrl = Deno.env.get('OUTCOME_BASE_URL')
@@ -152,7 +152,7 @@ Deno.serve(async (request) => {
     const { lead, claimId, modified } = claim as { lead: LeadRecord; claimId: string; modified: boolean }
     claimedId = { id, claimId }
 
-    if (!resendApiKey || !notificationEmail) {
+    if (!resendApiKey || !notificationEmails.length) {
       throw new Error('Missing RESEND_API_KEY or NOTIFICATION_EMAIL')
     }
 
@@ -163,29 +163,18 @@ Deno.serve(async (request) => {
 
     const outcome = outcomeBaseUrl ? await createOutcomeToken() : null
 
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + resendApiKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: emailFrom,
-        to: [notificationEmail],
-        subject: buildSubject(lead, labels, { modified }),
-        html: buildScoreBlockHtml(lead) + buildKeyFieldsHtml(lead, labels) + htmlForLead(lead, outputFields, labels) +
-          (outcome ? buildOutcomeLinksHtml(outcomeBaseUrl, lead.id, outcome.token) : ''),
-      }),
+    const sentEmails = await sendNotificationEmails({
+      recipients: notificationEmails,
+      apiKey: resendApiKey,
+      from: emailFrom,
+      subject: buildSubject(lead, labels, { modified }),
+      html: buildScoreBlockHtml(lead) + buildKeyFieldsHtml(lead, labels) + htmlForLead(lead, outputFields, labels) +
+        (outcome ? buildOutcomeLinksHtml(outcomeBaseUrl, lead.id, outcome.token) : ''),
     })
-
-    if (!response.ok) {
-      console.error('Resend error status:', response.status)
-      throw new Error('Resend request failed')
-    }
 
     const sentAt = new Date()
     const markResult = await markNotification(supabaseAdmin, lead.id, claimId, 'sent', {
-      notification_email: notificationEmail,
+      notification_email: sentEmails.join(', '),
       notified_at: sentAt.toISOString(),
       ...(outcome ? {
         outcome_token_hash: outcome.hash,

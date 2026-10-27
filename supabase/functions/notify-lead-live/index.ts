@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { parseNotificationEmails, sendNotificationEmails } from './notify-core.js'
 
 type LeadRecord = {
   id: string
@@ -24,7 +25,7 @@ const supabaseAdmin = createClient(
 )
 
 const resendApiKey = Deno.env.get('RESEND_API_KEY')
-const notificationEmail = Deno.env.get('NOTIFICATION_EMAIL')
+const notificationEmails = parseNotificationEmails(Deno.env.get('NOTIFICATION_EMAIL'))
 const emailFrom = Deno.env.get('EMAIL_FROM') || (() => { throw new Error('Missing EMAIL_FROM') })()
 const webhookSecret = Deno.env.get('WEBHOOK_SECRET')
 const FLOW_KEY = 'interior_design_lead_v1'
@@ -175,7 +176,7 @@ Deno.serve(async (request) => {
       })
     }
 
-    if (!resendApiKey || !notificationEmail) {
+    if (!resendApiKey || !notificationEmails.length) {
       throw new Error('Missing RESEND_API_KEY or NOTIFICATION_EMAIL')
     }
 
@@ -184,28 +185,23 @@ Deno.serve(async (request) => {
       loadValueLabels(),
     ])
 
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + resendApiKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    // Each recipient gets its own email; only the first recipient decides sent/failed.
+    let sentEmails: string[]
+    try {
+      sentEmails = await sendNotificationEmails({
+        recipients: notificationEmails,
+        apiKey: resendApiKey,
         from: emailFrom,
-        to: [notificationEmail],
         subject: '新完成案件：' + (lead.customer_name ?? '未填姓名'),
         html: htmlForLead(lead, outputFields, labels),
-      }),
-    })
-
-    if (!response.ok) {
-      const body = await response.text()
+      })
+    } catch (error) {
       await markNotification(lead.id, 'failed')
-      throw new Error('Resend error ' + response.status + ': ' + body)
+      throw error
     }
 
     const updated = await markNotification(lead.id, 'sent', {
-      notification_email: notificationEmail,
+      notification_email: sentEmails.join(', '),
       notified_at: new Date().toISOString(),
     })
 

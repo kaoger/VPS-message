@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { claimLead, markNotification, createOutcomeToken } from '../supabase/functions/notify-lead/notify-core.js'
+import { claimLead, markNotification, createOutcomeToken, parseNotificationEmails, sendNotificationEmails } from '../supabase/functions/notify-lead/notify-core.js'
 import crypto from 'node:crypto'
 
 function fakeClient(initialRow) {
@@ -43,6 +43,153 @@ const initial = () => ({
 })
 const options = (id = 'claim-1') => ({ delays: [0], newId: () => id, now: () => '2026-09-28T00:00:00Z' })
 const markOptions = { delays: [0] }
+
+function fakeSender(results) {
+  const calls = []
+  const errors = []
+  let active = false
+  return {
+    calls,
+    errors,
+    dependencies: {
+      async fetchImpl(url, request) {
+        assert.equal(active, false, 'Recipients must be sent sequentially')
+        active = true
+        calls.push({ url, ...request, body: JSON.parse(request.body) })
+        await Promise.resolve()
+        active = false
+        const result = results[calls.length - 1]
+        if (result instanceof Error) throw result
+        assert.equal(typeof result, 'number', 'Unexpected extra send')
+        return { ok: result >= 200 && result < 300, status: result }
+      },
+      logError: (...args) => errors.push(args),
+    },
+  }
+}
+
+const emailMessage = {
+  apiKey: 'synthetic-resend-key', from: 'notify@example.test',
+  subject: '新客戶通知', html: '<a href="https://example.test/lead/outcome?t=same-token">確認</a>',
+}
+
+test('single notification email keeps the existing one-recipient request', async () => {
+  const sender = fakeSender([200])
+  const recipients = parseNotificationEmails('owner@example.test')
+  assert.deepEqual(recipients, ['owner@example.test'])
+  assert.deepEqual(await sendNotificationEmails({ ...emailMessage, recipients }, sender.dependencies), recipients)
+  assert.deepEqual(sender.calls, [{
+    url: 'https://api.resend.com/emails', method: 'POST',
+    headers: { Authorization: 'Bearer synthetic-resend-key', 'Content-Type': 'application/json' },
+    body: { from: emailMessage.from, to: recipients, subject: emailMessage.subject, html: emailMessage.html },
+  }])
+  assert.deepEqual(sender.errors, [])
+})
+
+test('notification emails split commas and semicolons, trim, lowercase and deduplicate in order', () => {
+  assert.deepEqual(parseNotificationEmails(' B@Y.com, ; a@X.com ;\tB@y.COM,\n C@z.com ; a@x.com, '), [
+    'b@y.com', 'a@x.com', 'c@z.com',
+  ])
+})
+
+test('invalid notification email entries are skipped', () => {
+  assert.deepEqual(parseNotificationEmails('bad; a@@x.com, @x.com, a@, a@localhost, a@.com, a@x., a@x..com, a b@x.com; Valid@x.com'), [
+    'valid@x.com',
+  ])
+})
+
+test('empty parsed recipients or missing API key use the existing configuration error', async () => {
+  const sender = fakeSender([])
+  for (const value of [undefined, null, '', ' , ;\t\n', 'invalid; a@@x.com']) {
+    const recipients = parseNotificationEmails(value)
+    assert.deepEqual(recipients, [])
+    await assert.rejects(sendNotificationEmails({ ...emailMessage, recipients }, sender.dependencies), {
+      message: 'Missing RESEND_API_KEY or NOTIFICATION_EMAIL',
+    })
+  }
+  await assert.rejects(sendNotificationEmails({ ...emailMessage, apiKey: '', recipients: ['a@x.com'] }, sender.dependencies), {
+    message: 'Missing RESEND_API_KEY or NOTIFICATION_EMAIL',
+  })
+  assert.equal(sender.calls.length, 0)
+})
+
+test('successful recipients get separate requests with the same content and token, stored in order', async () => {
+  const { client, state } = fakeClient(initial())
+  const claim = await claimLead(client, 'lead-1', options())
+  const recipients = parseNotificationEmails('a@x.com; b@y.com, c@z.com')
+  const sender = fakeSender([200, 201, 200])
+  const sentEmails = await sendNotificationEmails({ ...emailMessage, recipients }, sender.dependencies)
+  assert.deepEqual(sentEmails, recipients)
+  assert.deepEqual(sender.calls.map(({ body }) => body), recipients.map((email) => ({
+    from: emailMessage.from, to: [email], subject: emailMessage.subject, html: emailMessage.html,
+  })))
+  assert.equal(await markNotification(client, 'lead-1', claim.claimId, 'sent', {
+    notification_email: sentEmails.join(', '),
+  }, markOptions), 'updated')
+  assert.equal(state.row.notification_email, 'a@x.com, b@y.com, c@z.com')
+  assert.equal(state.row.notification_status, 'sent')
+  assert.deepEqual(sender.errors, [])
+})
+
+test('primary success and secondary failure stay sent and store only the successful recipient', async () => {
+  const { client, state } = fakeClient(initial())
+  const claim = await claimLead(client, 'lead-1', options())
+  const sender = fakeSender([200, 403])
+  const sentEmails = await sendNotificationEmails({
+    ...emailMessage, recipients: parseNotificationEmails('a@x.com, b@y.com'),
+  }, sender.dependencies)
+  assert.deepEqual(sentEmails, ['a@x.com'])
+  assert.equal(await markNotification(client, 'lead-1', claim.claimId, 'sent', {
+    notification_email: sentEmails.join(', '),
+  }, markOptions), 'updated')
+  assert.equal(state.row.notification_status, 'sent')
+  assert.equal(state.row.notification_email, 'a@x.com')
+  assert.deepEqual(sender.errors, [['secondary_recipient_failed', 403]])
+  assert.equal(sender.calls.length, 2)
+})
+
+test('secondary failure does not prevent later recipients from succeeding', async () => {
+  const sender = fakeSender([200, 403, 200])
+  assert.deepEqual(await sendNotificationEmails({
+    ...emailMessage, recipients: ['a@x.com', 'b@y.com', 'c@z.com'],
+  }, sender.dependencies), ['a@x.com', 'c@z.com'])
+  assert.deepEqual(sender.errors, [['secondary_recipient_failed', 403]])
+})
+
+test('primary failure throws and marks failed even when a secondary recipient succeeds', async () => {
+  const { client, state } = fakeClient(initial())
+  const claim = await claimLead(client, 'lead-1', options())
+  const sender = fakeSender([403, 200])
+  await assert.rejects(async () => {
+    try {
+      await sendNotificationEmails({ ...emailMessage, recipients: ['a@x.com', 'b@y.com'] }, sender.dependencies)
+    } catch (error) {
+      assert.equal(await markNotification(client, 'lead-1', claim.claimId, 'failed', {}, markOptions), 'updated')
+      throw error
+    }
+  }, { message: 'Resend request failed' })
+  assert.equal(state.row.notification_status, 'failed')
+  assert.equal(state.row.notification_email, undefined)
+  assert.equal(sender.calls.length, 2)
+  assert.deepEqual(sender.errors, [['Resend error status:', 403]])
+})
+
+test('secondary network error logs only status 0 and does not expose error details', async () => {
+  const sender = fakeSender([200, new Error('private recipient b@y.com and token')])
+  assert.deepEqual(await sendNotificationEmails({
+    ...emailMessage, recipients: ['a@x.com', 'b@y.com'],
+  }, sender.dependencies), ['a@x.com'])
+  assert.deepEqual(sender.errors, [['secondary_recipient_failed', 0]])
+})
+
+test('primary network error still throws after attempting the secondary recipient', async () => {
+  const sender = fakeSender([new Error('private request details'), 200])
+  await assert.rejects(sendNotificationEmails({
+    ...emailMessage, recipients: ['a@x.com', 'b@y.com'],
+  }, sender.dependencies), { message: 'Resend request failed' })
+  assert.equal(sender.calls.length, 2)
+  assert.deepEqual(sender.errors, [['Resend error status:', 0]])
+})
 
 test('pending claim then mark sent', async () => {
   const { client, state } = fakeClient(initial())

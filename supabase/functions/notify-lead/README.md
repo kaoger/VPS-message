@@ -4,6 +4,7 @@
 - 取得日期：2026-09-27；線上 `updated_at`：2026-09-04T06:52:49.734Z。
 - 與取得的線上版差異：`EMAIL_FROM` 必填、改用 `SUPABASE_SECRET_KEYS.default`，以及 Step 2 的搶單、寄信與狀態更新邏輯和 Step 3 的聯絡結果連結。
 - 必要環境變數：`SUPABASE_URL`、`SUPABASE_SECRET_KEYS`（平台預設提供）、`RESEND_API_KEY`、`NOTIFICATION_EMAIL`、`EMAIL_FROM`、`WEBHOOK_SECRET`。
+- `NOTIFICATION_EMAIL` 支援逗號或分號分隔多個信箱（例如 `a@x.com, b@y.com`）；逐位寄送，以首位有效收件人的結果決定 sent／failed，`notification_email` 只記錄成功者。
 - 選用環境變數：`OUTCOME_BASE_URL`（例如 `https://bot.sameheart-design.com`）。未設定時仍照常寄信，不附聯絡結果連結，也不寫入 token 欄位；設定後，每封成功寄出的通知有四個 14 天有效的確認連結。
 - 處理流程：驗證 `x-webhook-secret` 後只讀 payload 的 `record.id`。讀取最新列；不存在時短暫重試。只有 `complete` 且 `pending` 的列會用舊 claim id 做 CAS 搶單，寫入 `sending`、`notification_claimed_at` 與新的 `notification_claim_id`。
 - 信件使用搶到的最新列；舊 claim id 或 `notified_at` 非 null 時，主旨顯示「已修改」。人工重送（`failed` 改回 `pending`）也會顯示【已修改】，可接受。內文先顯示評分、固定欄位，再顯示原有 `flow_output_fields`。極少數當機情況可能多寄一封內部通知，可接受。
