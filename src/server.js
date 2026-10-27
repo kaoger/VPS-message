@@ -191,7 +191,7 @@ app.post("/form/submit", formRateLimit(), async (req, res) => {
     logEvent("form_summary_fail");
   }
   try {
-    await meta.sendUrlButton(psid, "如需調整這筆需求，請點「修改需求」。連結兩小時內有效；過期可傳「修改需求」取得新連結。另有新案件可傳「新增需求」。", { title: "修改需求", url: editUrl });
+    await meta.sendUrlButton(psid, "如需調整這筆需求，請點「修改需求」。連結兩小時內有效；過期可傳「修改需求」取得新連結。另有新案件可傳「新增需求」。", { title: "修改需求", url: editUrl, messengerExtensions: MESSENGER_WEBVIEW_ENABLED });
   } catch {
     notice += "\n\n修改按鈕未能傳到 Messenger，仍可使用本頁的「修改需求」。";
     logEvent("form_edit_button_fail");

@@ -13,6 +13,7 @@ Object.assign(process.env, {
   PUBLIC_BASE_URL: "https://example.test", SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_SECRET_KEY: "sb_secret_test", SUPABASE_SERVICE_ROLE_KEY: "", LOG_PATH: "",
   INVITE_COOLDOWN_MINUTES: "30", TRUST_LOCAL_PROXY: "false",
+  MESSENGER_WEBVIEW_ENABLED: "true",
 });
 const realFetch = globalThis.fetch;
 const realLog = console.log;
@@ -142,6 +143,7 @@ test("form renders shared questions and escapes customer-supplied values", async
 });
 test("completion page shows return notice only on failure and gates auto-return on success", () => {
   const manual = renderDonePage({ summary: "送出摘要", messengerOk: true, heading: "需求已送出" });
+  assert.match(manual, /id="messenger-return-link" href="https:\/\/m\.me\/157645098246646" class="button button-secondary">回到 Messenger 對話<\/a>/);
   assert.doesNotMatch(manual, /messenger-return-notice|已完成，請回到 Messenger/);
   assert.doesNotMatch(manual, /MessengerExtensionsSDK|requestCloseBrowser/);
 
@@ -149,10 +151,23 @@ test("completion page shows return notice only on failure and gates auto-return 
   assert.doesNotMatch(automatic, /messenger-return-notice|即將返回對話/);
   assert.match(automatic, /requestCloseBrowser/);
   assert.match(automatic, /messenger\.Extensions\.js/);
+  assert.match(automatic, /href="https:\/\/m\.me\/157645098246646"/);
 
   const failedMessage = renderDonePage({ summary: "送出摘要", messengerOk: false, autoReturnToMessenger: true });
   assert.match(failedMessage, /請回到 Messenger 對話查看處理結果；若沒有自動返回，請手動切回 Messenger。/);
   assert.doesNotMatch(failedMessage, /MessengerExtensionsSDK|requestCloseBrowser/);
+  assert.doesNotMatch(failedMessage, /messenger-return-link|https:\/\/m\.me\//);
+});
+
+test("completion actions retain edit and new-case links and escape values", () => {
+  const html = renderDonePage({
+    summary: '<script>alert("summary")</script>', messengerOk: true,
+    editUrl: '/form?t=edit&value="quoted"', newFormUrl: '/form?t=new&value="quoted"',
+  });
+  assert.match(html, /&lt;script&gt;alert\(&quot;summary&quot;\)&lt;\/script&gt;/);
+  assert.match(html, /href="\/form\?t=edit&amp;value=&quot;quoted&quot;">修改需求/);
+  assert.match(html, /href="\/form\?t=new&amp;value=&quot;quoted&quot;" class="button button-secondary">新增新案件/);
+  assert.match(html, /href="https:\/\/m\.me\/157645098246646"/);
 });
 test("Messenger webview button flag is opt-in", async () => {
   const before = messages.length;
@@ -200,7 +215,10 @@ test("concurrent duplicate submission produces exactly one insert and message", 
   const responses = await Promise.all([submit(token), submit(token)]);
   assert.deepEqual(responses.map(r => r.status).sort(), [200, 409]);
   assert.deepEqual([sends - previous[0], inserts - previous[1]], [3, 1]);
+  const editMessage = messages.find(m => m.recipient.id === "duplicate-test" && m.message.attachment?.payload.buttons[0].title === "修改需求");
+  assert.equal(editMessage.message.attachment.payload.buttons[0].messenger_extensions, true);
   const invitation = messages.find(m => m.recipient.id === "duplicate-test" && m.message.attachment?.payload.buttons[0].title === "加入官方 LINE");
+  assert.equal("messenger_extensions" in invitation.message.attachment.payload.buttons[0], false);
   assert.match(invitation.message.attachment.payload.text, /感謝您的填寫/);
   assert.match(invitation.message.attachment.payload.text, /溝通需求、傳送照片/);
   assert.equal(invitation.message.attachment.payload.buttons[0].url, "https://line.me/R/ti/p/@662gzsyl?oat_content=url&ts=09240050");
@@ -217,6 +235,7 @@ test("concurrent duplicate submission produces exactly one insert and message", 
   assert.equal(nextResult.status, 200);
   const doneHtml = await nextResult.text();
   assert.match(doneHtml, /新增新案件/);
+  assert.match(doneHtml, /id="messenger-return-link" href="https:\/\/m\.me\/157645098246646"/);
   assert.doesNotMatch(doneHtml, /messenger-return-notice|已完成，請回到 Messenger/);
   assert.equal((await submit(nextToken)).status, 409);
   assert.deepEqual([sends - previous[0], inserts - previous[1]], [6, 2]);
@@ -298,7 +317,7 @@ test("four explicit service entries invite once and preselect the matching first
   for (const [index, trigger] of SERVICE_TRIGGERS.entries()) {
     const invitation = invitations.find(message => message.recipient.id === `service-trigger-${index}`);
     assert.match(invitation.message.attachment.payload.text, new RegExp(trigger.service));
-    assert.equal("messenger_extensions" in invitation.message.attachment.payload.buttons[0], false);
+    assert.equal(invitation.message.attachment.payload.buttons[0].messenger_extensions, true);
     const token = new URL(invitation.message.attachment.payload.buttons[0].url).searchParams.get("t");
     assert.equal(verifyFormToken(token).service, trigger.service);
     const form = await (await request("/form?t=" + encodeURIComponent(token))).text();
@@ -373,6 +392,8 @@ test("edits prefill and update the same lead; stale or forged ownership cannot o
   assert.equal((await submit(wrongOwner)).status, 409);
   const latestMessage = messages.filter(m => m.recipient.id === "duplicate-test" && m.message.attachment?.payload.buttons[0].title === "修改需求").at(-1);
   const lineUpdate = messages.filter(m => m.recipient.id === "duplicate-test" && m.message.attachment?.payload.buttons[0].title === "加入官方 LINE").at(-1);
+  assert.equal(latestMessage.message.attachment.payload.buttons[0].messenger_extensions, true);
+  assert.equal("messenger_extensions" in lineUpdate.message.attachment.payload.buttons[0], false);
   assert.match(lineUpdate.message.attachment.payload.text, /感謝您的更新/);
   const latest = new URL(latestMessage.message.attachment.payload.buttons[0].url).searchParams.get("t");
   const latestHtml = await (await request("/form?t=" + encodeURIComponent(latest))).text();

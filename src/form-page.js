@@ -1,4 +1,7 @@
 import { FORM_FIELDS } from "./form-schema.js";
+import { SANHE_PAGE_ID } from "./admin-config.js";
+
+const MESSENGER_CONVERSATION_URL = `https://m.me/${SANHE_PAGE_ID}`;
 
 /** Mobile-first demo form HTML */
 export function renderFormPage({ token, error = "", prefill = {}, editing = false }) {
@@ -208,9 +211,10 @@ export function renderDonePage({ summary, messengerOk, heading, editUrl, newForm
     <div class="card">
       <h1>${escapeHtml(heading || (messengerOk ? "已送出，摘要已發到 Messenger" : "請查看下方處理結果"))}</h1>
       <pre>${escapeHtml(summary)}</pre>
-      ${editUrl || newFormUrl ? `<div class="actions">
+      ${editUrl || newFormUrl || messengerOk ? `<div class="actions">
         ${editUrl ? `<a class="button button-primary" href="${escapeHtml(editUrl)}">修改需求</a>` : ""}
         ${newFormUrl ? `<a id="new-form-link" href="${escapeHtml(newFormUrl)}" class="button button-secondary">新增新案件</a>` : ""}
+        ${messengerOk ? `<a id="messenger-return-link" href="${escapeHtml(MESSENGER_CONVERSATION_URL)}" class="button button-secondary">${escapeHtml("回到 Messenger 對話")}</a>` : ""}
       </div>` : ""}
       ${editUrl ? `<p class="note">修改連結兩小時內有效，請勿轉傳。過期後請在 Messenger 傳「修改需求」。</p>` : ""}
       ${returnNotice ? `<p class="note" id="messenger-return-notice">${escapeHtml(returnNotice)}</p>` : ""}
