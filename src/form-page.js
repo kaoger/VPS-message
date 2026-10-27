@@ -2,6 +2,7 @@ import { FORM_FIELDS } from "./form-schema.js";
 import { SANHE_PAGE_ID } from "./admin-config.js";
 
 const MESSENGER_CONVERSATION_URL = `https://m.me/${SANHE_PAGE_ID}`;
+const MESSENGER_APP_URL = `fb-messenger://user-thread/${SANHE_PAGE_ID}`;
 
 /** Mobile-first demo form HTML */
 export function renderFormPage({ token, error = "", prefill = {}, editing = false }) {
@@ -214,12 +215,22 @@ export function renderDonePage({ summary, messengerOk, heading, editUrl, newForm
       ${editUrl || newFormUrl || messengerOk ? `<div class="actions">
         ${editUrl ? `<a class="button button-primary" href="${escapeHtml(editUrl)}">修改需求</a>` : ""}
         ${newFormUrl ? `<a id="new-form-link" href="${escapeHtml(newFormUrl)}" class="button button-secondary">新增新案件</a>` : ""}
-        ${messengerOk ? `<a id="messenger-return-link" href="${escapeHtml(MESSENGER_CONVERSATION_URL)}" class="button button-secondary">${escapeHtml("回到 Messenger 對話")}</a>` : ""}
+        ${messengerOk ? `<a id="messenger-return-link" href="${escapeHtml(MESSENGER_APP_URL)}" class="button button-secondary" data-fallback-url="${escapeHtml(MESSENGER_CONVERSATION_URL)}">${escapeHtml("回到 Messenger 對話")}</a>` : ""}
       </div>` : ""}
       ${editUrl ? `<p class="note">修改連結兩小時內有效，請勿轉傳。過期後請在 Messenger 傳「修改需求」。</p>` : ""}
       ${returnNotice ? `<p class="note" id="messenger-return-notice">${escapeHtml(returnNotice)}</p>` : ""}
     </div>
   </div>
+  ${messengerOk ? `<script>
+    var messengerReturnLink = document.getElementById("messenger-return-link");
+    messengerReturnLink.addEventListener("click", function () {
+      setTimeout(function () {
+        if (document.visibilityState === "visible") {
+          window.location.href = messengerReturnLink.dataset.fallbackUrl;
+        }
+      }, 1500);
+    });
+  </script>` : ""}
   ${autoReturnScript}
 </body>
 </html>`;

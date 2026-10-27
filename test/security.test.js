@@ -143,7 +143,7 @@ test("form renders shared questions and escapes customer-supplied values", async
 });
 test("completion page shows return notice only on failure and gates auto-return on success", () => {
   const manual = renderDonePage({ summary: "送出摘要", messengerOk: true, heading: "需求已送出" });
-  assert.match(manual, /id="messenger-return-link" href="https:\/\/m\.me\/157645098246646" class="button button-secondary">回到 Messenger 對話<\/a>/);
+  assert.match(manual, /id="messenger-return-link" href="fb-messenger:\/\/user-thread\/157645098246646" class="button button-secondary" data-fallback-url="https:\/\/m\.me\/157645098246646">回到 Messenger 對話<\/a>/);
   assert.doesNotMatch(manual, /messenger-return-notice|已完成，請回到 Messenger/);
   assert.doesNotMatch(manual, /MessengerExtensionsSDK|requestCloseBrowser/);
 
@@ -151,7 +151,8 @@ test("completion page shows return notice only on failure and gates auto-return 
   assert.doesNotMatch(automatic, /messenger-return-notice|即將返回對話/);
   assert.match(automatic, /requestCloseBrowser/);
   assert.match(automatic, /messenger\.Extensions\.js/);
-  assert.match(automatic, /href="https:\/\/m\.me\/157645098246646"/);
+  assert.match(automatic, /href="fb-messenger:\/\/user-thread\/157645098246646"/);
+  assert.match(automatic, /data-fallback-url="https:\/\/m\.me\/157645098246646"/);
 
   const failedMessage = renderDonePage({ summary: "送出摘要", messengerOk: false, autoReturnToMessenger: true });
   assert.match(failedMessage, /請回到 Messenger 對話查看處理結果；若沒有自動返回，請手動切回 Messenger。/);
@@ -167,7 +168,8 @@ test("completion actions retain edit and new-case links and escape values", () =
   assert.match(html, /&lt;script&gt;alert\(&quot;summary&quot;\)&lt;\/script&gt;/);
   assert.match(html, /href="\/form\?t=edit&amp;value=&quot;quoted&quot;">修改需求/);
   assert.match(html, /href="\/form\?t=new&amp;value=&quot;quoted&quot;" class="button button-secondary">新增新案件/);
-  assert.match(html, /href="https:\/\/m\.me\/157645098246646"/);
+  assert.match(html, /href="fb-messenger:\/\/user-thread\/157645098246646"/);
+  assert.match(html, /data-fallback-url="https:\/\/m\.me\/157645098246646"/);
 });
 test("Messenger webview button flag is opt-in", async () => {
   const before = messages.length;
@@ -235,7 +237,8 @@ test("concurrent duplicate submission produces exactly one insert and message", 
   assert.equal(nextResult.status, 200);
   const doneHtml = await nextResult.text();
   assert.match(doneHtml, /新增新案件/);
-  assert.match(doneHtml, /id="messenger-return-link" href="https:\/\/m\.me\/157645098246646"/);
+  assert.match(doneHtml, /id="messenger-return-link" href="fb-messenger:\/\/user-thread\/157645098246646"/);
+  assert.match(doneHtml, /data-fallback-url="https:\/\/m\.me\/157645098246646"/);
   assert.doesNotMatch(doneHtml, /messenger-return-notice|已完成，請回到 Messenger/);
   assert.equal((await submit(nextToken)).status, 409);
   assert.deepEqual([sends - previous[0], inserts - previous[1]], [6, 2]);
