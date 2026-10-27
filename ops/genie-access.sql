@@ -47,7 +47,8 @@ $revoke_columns$;
 grant select (
   id, status, answers, customer_name, phone, project_type, location,
   interior_area, budget_range, start_time, completed_at, contact_result,
-  contact_result_at, contact_first_at, lead_grade, notification_status
+  contact_result_at, contact_first_at, lead_grade, notification_status,
+  messenger_user_id, messenger_thread_id
 ) on table public.customer_leads to authenticated;
 grant update (contact_result) on table public.customer_leads to authenticated;
 

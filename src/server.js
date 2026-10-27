@@ -37,6 +37,7 @@ import { serviceForTrigger } from "./service-triggers.js";
 import { renderPrivacyPage, renderTermsPage, renderDataDeletionPage } from "./legal-pages.js";
 import { leadOutcomeRouter } from "./lead-outcome.js";
 import { createAdmin } from "./admin.js";
+import { attachThreadId } from "./thread-link.js";
 
 const DATA_DELETION_COMMAND = "刪除我的資料";
 const DATA_DELETION_REPLY = "已收到您的資料刪除申請。我們會在核對後 30 天內刪除您透過 Messenger 與需求表單提供的資料，完成後會再通知您。";
@@ -412,7 +413,10 @@ export async function handleIncoming(senderId, { text, payload }, send) {
       session.submitting = true;
       saveSession(senderId, session);
       try {
-        if (isSupabaseConfigured()) await createCustomerLead({ senderId, answers: session.answers });
+        if (isSupabaseConfigured()) {
+          const row = await createCustomerLead({ senderId, answers: session.answers });
+          void attachThreadId(row.id, senderId).catch(() => logEvent("thread_link_error"));
+        }
       } catch (error) {
         session.submitting = false;
         logEvent("customer_leads_insert_failed");

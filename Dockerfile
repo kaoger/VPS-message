@@ -11,6 +11,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --chown=10000:10000 src ./src
 COPY --chown=10000:10000 config ./config
+COPY --chown=10000:10000 scripts ./scripts
 
 USER 10000:10000
 EXPOSE 3000

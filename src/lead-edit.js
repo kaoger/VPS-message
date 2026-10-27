@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import { createCustomerLead, readCustomerLead, updateCustomerLead, isSupabaseConfigured } from "./supabase.js";
 import { signFormToken } from "./form-token.js";
+import { attachThreadId } from "./thread-link.js";
+import { logEvent } from "./log-event.js";
 
 const memory = new Map();
 const TTL = 2 * 60 * 60 * 1000;
@@ -32,6 +34,7 @@ export async function saveLead(psid, answers, edit = null) {
     if (!previous || version(previous.answers) !== edit.version) return null;
     if (edit.storage === "db") {
       const updated = await updateCustomerLead({ senderId: psid, id: edit.id, previousAnswers: previous.answers, answers: savedAnswers });
+      if (updated) void attachThreadId(updated.id, psid).catch(() => logEvent("thread_link_error"));
       return updated ? { ...updated, answers: savedAnswers, storage: "db" } : null;
     }
     // No await between checking the current revision and replacing memory state.
@@ -43,6 +46,7 @@ export async function saveLead(psid, answers, edit = null) {
   }
   if (isSupabaseConfigured()) {
     const row = await createCustomerLead({ senderId: psid, answers: savedAnswers });
+    void attachThreadId(row.id, psid).catch(() => logEvent("thread_link_error"));
     return { ...row, answers: savedAnswers, storage: "db" };
   }
   const row = { id: crypto.randomUUID(), senderId: psid, answers: savedAnswers, storage: "memory", expires: Date.now() + TTL };

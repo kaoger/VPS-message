@@ -125,6 +125,25 @@ export function isSupabaseConfigured() {
   );
 }
 
+/** Fill only the missing thread ID; preserve all workflow and notification fields. */
+export async function setLeadThreadId(id, threadId) {
+  if (typeof threadId !== "string" || !/^[0-9]{1,30}$/.test(threadId)) throw new Error("Invalid thread ID");
+  const { error } = await getClient().from("customer_leads")
+    .update({ messenger_thread_id: threadId }).eq("id", id).is("messenger_thread_id", null);
+  if (error) throw error;
+}
+
+/** Keyset pagination stays stable while backfill removes rows from the missing-ID set. */
+export async function listLeadsWithoutThreadId({ afterId = null, limit = 100 } = {}) {
+  let query = getClient().from("customer_leads").select("id,messenger_user_id")
+    .not("messenger_user_id", "is", null).neq("messenger_user_id", "")
+    .is("messenger_thread_id", null).order("id", { ascending: true }).limit(limit);
+  if (afterId) query = query.gt("id", afterId);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data;
+}
+
 export async function readOutcomeToken(id) {
   const { data, error } = await getClient().from("customer_leads")
     .select("outcome_token_hash,outcome_token_expires_at")

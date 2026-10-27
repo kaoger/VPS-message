@@ -26,6 +26,9 @@ const messages = [];
 globalThis.fetch = async (url, options) => {
   const value = String(url);
   if (value.startsWith("https://graph.facebook.com/")) {
+    if (new URL(value).pathname.endsWith("/conversations")) {
+      return Response.json({ error: { code: 100 } });
+    }
     sends++;
     messages.push(JSON.parse(options.body));
     assert.equal(new URL(value).search, "");
